@@ -1,0 +1,14 @@
+{
+  "name": "karting",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Phone-first multiplayer kart brawler. Step 1: solo drifting kart.",
+  "scripts": {
+    "start": "node server/dev.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
