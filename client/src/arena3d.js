@@ -32,7 +32,7 @@ const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 
 export function buildSky(scene) {
   scene.background = new THREE.Color(PALETTE.sky);
-  scene.fog = new THREE.Fog(PALETTE.haze, 75, 210);
+  scene.fog = new THREE.Fog(PALETTE.haze, 80, 260);
 
   const tex = canvasTexture(4, 256, (g, w, h) => {
     const grd = g.createLinearGradient(0, 0, 0, h);
@@ -99,7 +99,7 @@ export function buildLights(scene) {
   };
 }
 
-function floorTexture() {
+function floorTexture(repeat = 7) {
   const rnd = seeded(3);
   return canvasTexture(
     512,
@@ -144,7 +144,7 @@ function floorTexture() {
         }
       }
     },
-    { repeat: 7 },
+    { repeat },
   );
 }
 
@@ -319,7 +319,15 @@ function addRuin(b, o, rnd) {
   }
 }
 
-function addTemple(b, o) {
+function addTemple(batch, o) {
+  // draw at size 1 around (o.x, o.z), scaled by o.scale
+  const k = o.scale || 1;
+  const b = {
+    add: (g, c, p = [0, 0, 0], r, sc = 1) => {
+      const scl = typeof sc === 'number' ? [sc * k, sc * k, sc * k] : sc.map((v) => v * k);
+      batch.add(g, c, [o.x + (p[0] - o.x) * k, p[1] * k, o.z + (p[2] - o.z) * k], r, scl);
+    },
+  };
   const tiers = [12, 10, 8, 6];
   let y = 0;
   tiers.forEach((s, i) => {
@@ -349,7 +357,7 @@ function addTemple(b, o) {
     const len = 0.6 + ((i * 53) % 7) * 0.18;
     b.add(vine, PALETTE.leafDark, [o.x + x, 1.3 - len / 2 + 0.1, o.z + z], [0, 0, 0], [1, len, 1]);
   }
-  return y + 3.1; // top of the shrine, where the idol sits
+  return (y + 3.1) * k; // top of the shrine, where the idol sits
 }
 
 function addRock(b, o, rnd) {
@@ -416,10 +424,136 @@ function addJungle(b, half, rnd) {
   const peak = new THREE.ConeGeometry(1, 1, 6);
   for (let i = 0; i < 14; i++) {
     const a = (i / 14) * Math.PI * 2 + rnd() * 0.2;
-    const r = 175 + rnd() * 30;
-    const h = 40 + rnd() * 45;
+    const r = Math.max(175, half + 110) + rnd() * 30;
+    const h = 40 + rnd() * 45 + Math.max(0, half - 46) * 0.5;
     b.add(peak, rnd() < 0.5 ? '#5b8a6a' : '#6f9a72', [Math.sin(a) * r, h / 2 - 2, Math.cos(a) * r], [0, rnd(), 0], [35 + rnd() * 20, h, 35 + rnd() * 20]);
   }
+}
+
+// ---------------------------------------------------------------- race track
+
+function trackSurface(track) {
+  const { center } = track;
+  const n = center.length;
+  const half = track.width / 2 + 0.3;
+  const pos = [];
+  const uv = [];
+  const idx = [];
+  let dist = 0;
+  for (let i = 0; i <= n; i++) {
+    const c = center[i % n];
+    if (i > 0) {
+      const p = center[i - 1];
+      dist += Math.hypot(c.x - p.x, c.z - p.z);
+    }
+    pos.push(c.x + c.nx * half, 0.015, c.z + c.nz * half, c.x - c.nx * half, 0.015, c.z - c.nz * half);
+    uv.push(0, dist / 10, 1.6, dist / 10);
+    if (i < n) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const tex = dirtTexture();
+  tex.repeat.set(1, 1);
+  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: tex, polygonOffset: true, polygonOffsetFactor: -1 }));
+  m.receiveShadow = true;
+  return m;
+}
+
+function addTrackWalls(b, track, rnd) {
+  const segs = track.walls;
+  const piece = box(1, 1, 1);
+  segs.forEach((w, i) => {
+    const dx = w.x2 - w.x1;
+    const dz = w.z2 - w.z1;
+    const len = Math.hypot(dx, dz) + 0.15;
+    const h = 1.05 + ((i * 7) % 5) * 0.06;
+    const yaw = Math.atan2(dx, dz);
+    const cx = (w.x1 + w.x2) / 2;
+    const cz = (w.z1 + w.z2) / 2;
+    const tone = (i * 13) % 3;
+    b.add(piece, tone === 0 ? PALETTE.stone : tone === 1 ? PALETTE.stoneLight : PALETTE.stoneDark, [cx, h / 2, cz], [0, yaw, 0], [w.r * 2, h, len]);
+    if ((i * 5) % 7 < 2) b.add(piece, PALETTE.moss, [cx, h + 0.06, cz], [0, yaw, 0], [w.r * 2 * 0.9, 0.12, len * 0.9]);
+    // a taller post every few pieces
+    if (i % 9 === 0) {
+      b.add(piece, PALETTE.stoneDark, [w.x1, 0.9, w.z1], [0, yaw, 0], [1.4, 1.8, 1.4]);
+      b.add(piece, PALETTE.stoneLight, [w.x1, 1.9, w.z1], [0, yaw, 0], [1.6, 0.25, 1.6]);
+    }
+  });
+}
+
+function addKerbs(b, track) {
+  // red and cream stripes along the inside of the bends
+  const { center } = track;
+  const n = center.length;
+  const piece = box(1, 1, 1);
+  const off = track.width / 2 - 0.5;
+  for (let i = 0; i < n; i++) {
+    const a = center[(i - 2 + n) % n];
+    const c = center[i];
+    const z = center[(i + 2) % n];
+    const turn = Math.atan2(Math.sin(z.yaw - a.yaw), Math.cos(z.yaw - a.yaw));
+    if (Math.abs(turn) < 0.22) continue;
+    const inside = turn > 0 ? 1 : -1; // turning left -> kerb on the left
+    const next = center[(i + 1) % n];
+    const len = Math.hypot(next.x - c.x, next.z - c.z);
+    for (const sideSign of [inside, -inside]) {
+      const o = sideSign === inside ? off : off;
+      const x = c.x + c.nx * o * sideSign + (next.x - c.x) / 2;
+      const zz = c.z + c.nz * o * sideSign + (next.z - c.z) / 2;
+      b.add(piece, i % 2 ? '#e8463c' : '#fff1d6', [x, 0.04, zz], [0, c.yaw, 0], [1.1, 0.08, len]);
+    }
+  }
+}
+
+function startLine(scene, b, track, name) {
+  const g = track.gates[0];
+  const c = track.center[g.index];
+  // chequered strip on the road
+  const tex = canvasTexture(256, 32, (ctx, w, h) => {
+    const sq = 16;
+    for (let y = 0; y < h / sq; y++) for (let x = 0; x < w / sq; x++) {
+      ctx.fillStyle = (x + y) % 2 ? '#1d1726' : '#fff4dc';
+      ctx.fillRect(x * sq, y * sq, sq, sq);
+    }
+  });
+  const strip = new THREE.Mesh(
+    new THREE.PlaneGeometry(track.width + 0.6, 2).rotateX(-Math.PI / 2),
+    new THREE.MeshLambertMaterial({ map: tex, polygonOffset: true, polygonOffsetFactor: -3 }),
+  );
+  strip.position.set(c.x, 0.02, c.z);
+  strip.rotation.y = c.yaw + Math.PI / 2;
+  strip.receiveShadow = true;
+  scene.add(strip);
+
+  // arch: two stone towers and a banner
+  const span = track.width / 2 + 2.2;
+  for (const sgn of [1, -1]) {
+    const x = c.x + c.nx * span * sgn;
+    const z = c.z + c.nz * span * sgn;
+    b.add(box(1, 1, 1), PALETTE.stoneDark, [x, 3.5, z], [0, c.yaw, 0], [2.2, 7, 2.2]);
+    b.add(box(1, 1, 1), PALETTE.stoneLight, [x, 7.2, z], [0, c.yaw, 0], [2.8, 0.5, 2.8]);
+    b.add(new THREE.ConeGeometry(1.4, 2, 4), PALETTE.gold, [x, 8.4, z], [0, c.yaw + Math.PI / 4, 0]);
+  }
+  b.add(box(1, 1, 1), PALETTE.stone, [c.x, 6.4, c.z], [0, c.yaw, 0], [span * 2, 0.6, 1.2]);
+  const banner = canvasTexture(512, 96, (ctx, w, h) => {
+    ctx.fillStyle = '#d9620b';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#3b2412';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, w - 8, h - 8);
+    ctx.fillStyle = '#fff4dc';
+    ctx.font = '900 56px "Lilita One", "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(name.toUpperCase(), w / 2, h / 2 + 3);
+  });
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(span * 1.4, span * 0.26), new THREE.MeshBasicMaterial({ map: banner, side: THREE.DoubleSide }));
+  sign.position.set(c.x, 5.4, c.z);
+  sign.rotation.y = c.yaw + Math.PI; // readable as you drive toward it
+  scene.add(sign);
 }
 
 // ---------------------------------------------------------------- live objects
@@ -564,12 +698,13 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
   scene.add(grass);
 
   // tiled courtyard floor
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(half * 2 + 4, half * 2 + 4), new THREE.MeshLambertMaterial({ map: floorTexture() }));
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(half * 2 + 4, half * 2 + 4), new THREE.MeshLambertMaterial({ map: floorTexture(Math.round((half * 2 + 4) / 13.7)) }));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
 
   // a worn dirt ring around the temple: where everyone ends up driving
+  if (!arena.track) {
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(10.5, 21.5, 48, 1),
     new THREE.MeshLambertMaterial({ map: dirtTexture(), transparent: true, opacity: 0.6, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }),
@@ -578,19 +713,32 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
   ring.position.y = 0.01;
   ring.receiveShadow = true;
   scene.add(ring);
+  }
 
   // static scenery: one batch that casts shadows, one far batch that does not
   const near = new StaticBatch();
   const far = new StaticBatch();
   addWalls(near, half, rnd);
   let idolY = 6;
+  let idolAt = { x: 0, z: 0 };
   const swapped = {}; // kind -> obstacles drawn with a model file instead
-  for (const o of arena.obstacles) {
+  if (arena.track) {
+    scene.add(trackSurface(arena.track));
+    addTrackWalls(near, arena.track, rnd);
+    addKerbs(near, arena.track);
+    startLine(scene, near, arena.track, arena.name);
+  }
+  const shaped = (o) => (o.shape ? o : { ...o, shape: o.hw ? 'box' : 'circle', r: o.r || 1 });
+  const props = [...arena.obstacles.filter((o) => o.kind !== 'trackwall'), ...(arena.decor || []).map(shaped)];
+  for (const o of props) {
     if (models.props[o.kind]) {
       (swapped[o.kind] ||= []).push(o);
       continue;
     }
-    if (o.kind === 'temple') idolY = addTemple(near, o);
+    if (o.kind === 'temple') {
+      idolY = addTemple(near, o);
+      idolAt = o;
+    }
     else if (o.kind === 'ruin') addRuin(near, o, rnd);
     else if (o.kind === 'pillar') addPillar(near, o, rnd);
     else if (o.kind === 'palm') addPalm(near, o.x, o.z, rnd);
@@ -607,7 +755,10 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
       const m = placement(kind, o, opts, box, rnd);
       inst.setMatrixAt(i, m);
       // the idol floats just above whatever temple model is used
-      if (kind === 'temple') idolY = box.clone().applyMatrix4(m).max.y + 0.2;
+      if (kind === 'temple') {
+        idolY = box.clone().applyMatrix4(m).max.y + 0.2;
+        idolAt = o;
+      }
     });
     inst.commit();
   }
@@ -627,7 +778,8 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
   const base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 1, 6), gold);
   base.position.y = 0.5;
   idol.add(head, base);
-  idol.position.set(0, idolY, 0);
+  idol.position.set(idolAt.x, idolY, idolAt.z);
+  idol.scale.setScalar(idolAt.scale || 1);
   scene.add(idol);
 
   // torch flames: little glowing cubes on top of the posts
@@ -658,7 +810,7 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
       crates.update(dt, t);
       mangoes.update(dt, t);
       idol.rotation.y = t * 0.6;
-      idol.position.y = idolY + Math.sin(t * 1.5) * 0.15;
+      idol.position.y = idolY + Math.sin(t * 1.5) * 0.15 * (idolAt.scale || 1);
       flamePos.forEach(([x, y, z], i) => {
         const k = 0.85 + Math.sin(t * 13 + i * 1.7) * 0.15 + Math.sin(t * 7.3 + i) * 0.1;
         e.set(t * 2 + i, t * 3 + i, 0);

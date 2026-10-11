@@ -14,12 +14,13 @@ const INPUT_QUEUE_MAX = 6;
 let nextId = 1;
 
 export class Room {
-  constructor({ arena = circuit, log = () => {} } = {}) {
+  constructor({ arena = circuit, laps = arena.laps || 3, log = () => {} } = {}) {
     this.arena = arena;
+    this.laps = laps;
     this.log = log;
     this.players = new Map(); // id -> player
     this.world = createWorld(arena);
-    this.race = createRace(this.world);
+    this.race = createRace(this.world, { laps: this.laps });
     this.pending = []; // events since the last snapshot
     this.tickCount = 0;
     this.timer = null;
@@ -160,7 +161,7 @@ export class Room {
     const order = [...this.humans(), ...this.bots()].map((p) => p.id);
     if (!this.humans().length) return;
     this.world = createWorld(this.arena);
-    this.race = createRace(this.world);
+    this.race = createRace(this.world, { laps: this.laps });
     startRace(this.race, this.world, order);
     for (const p of this.players.values()) {
       p.queue = [];

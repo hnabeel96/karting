@@ -1,0 +1,6 @@
+# Add to /etc/caddy/Caddyfile, then: sudo systemctl reload caddy
+# Caddy fetches the HTTPS certificate and forwards WebSockets automatically.
+kart.pineapp.win {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}

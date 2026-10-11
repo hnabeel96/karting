@@ -1,0 +1,18 @@
+[Unit]
+Description=Karting game server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/karting
+ExecStart=/usr/bin/node server/index.js
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=LAPS=3
+Restart=always
+RestartSec=2
+# run as an unprivileged user
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

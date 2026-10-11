@@ -29,13 +29,13 @@ export function startRace(race, world, ids) {
   world.crates.forEach((c) => { c.alive = true; c.t = 0; });
   world.fruit.forEach((f) => { f.alive = true; f.t = 0; });
   race.entrants = {};
-  for (const k of world.karts) {
+  for (const [i, k] of world.karts.entries()) {
     race.entrants[k.id] = {
       lap: 0, // lap you are on (1-based once you cross the start line)
       next: 0, // index of the next gate to cross
       finished: false,
       finishTime: null,
-      place: 0,
+      place: i + 1, // grid order until the lights go green
       lapStart: 0,
       bestLap: null,
       lastX: k.x,

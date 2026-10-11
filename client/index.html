@@ -25,6 +25,7 @@
     color-scheme: light;
   }
   html, body { height: 100%; margin: 0; overflow: hidden; background: #7cc8f2; color: var(--cream); }
+  [hidden] { display: none !important; }
   body {
     font-family: var(--body);
     -webkit-user-select: none; user-select: none;
@@ -205,6 +206,117 @@
   .keys kbd { font: 900 12px/1 var(--body); background: rgba(255,244,220,0.18); padding: 3px 6px; border-radius: 5px; }
   @media (hover: none) { .keys { display: none; } }
 
+  /* ---------- race HUD */
+  #race-hud { top: calc(10px + env(safe-area-inset-top, 0px)); left: calc(14px + env(safe-area-inset-left, 0px)); gap: 12px; align-items: flex-start; pointer-events: none; }
+  body.racing #counters { left: auto; right: calc(150px + env(safe-area-inset-right, 0px)); top: calc(10px + env(safe-area-inset-top, 0px)); }
+  body.racing #crate-box { display: none; }
+  #place {
+    font: 64px/0.85 var(--display); color: var(--cream);
+    -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; text-shadow: 0 4px 0 var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  #place sup { font-size: 0.42em; vertical-align: top; margin-left: 2px; }
+  #place small { font-size: 0.38em; opacity: 0.85; margin-left: 4px; }
+  #place.first { color: var(--gold); }
+  .race-lines { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+  .race-lines .chip { font-size: 20px; padding: 5px 12px; }
+  #timer { font-variant-numeric: tabular-nums; }
+  #minimap {
+    position: fixed; z-index: 5; display: none; pointer-events: none;
+    top: calc(62px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+    width: 132px; height: 132px; border-radius: 16px; background: rgba(52, 38, 24, 0.42);
+  }
+  body.racing #minimap { display: block; }
+  #wrongway, #spectate {
+    position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); z-index: 6; pointer-events: none;
+    font: 40px/1 var(--display); color: #ffe1d6; -webkit-text-stroke: 2px #7a1d12; paint-order: stroke fill; text-shadow: 0 4px 0 #7a1d12;
+    animation: blink 0.6s steps(2, start) infinite;
+  }
+  #spectate { top: 18%; font-size: 22px; color: var(--cream); -webkit-text-stroke: 0; text-shadow: 0 2px 0 rgba(0,0,0,0.4); animation: none; background: var(--stone); padding: 8px 16px; border-radius: 999px; white-space: nowrap; }
+  @keyframes blink { to { visibility: hidden; } }
+  #countdown {
+    position: fixed; left: 50%; top: 40%; z-index: 7; pointer-events: none;
+    font: 150px/1 var(--display); color: var(--gold); -webkit-text-stroke: 5px var(--ink); paint-order: stroke fill; text-shadow: 0 10px 0 var(--ink);
+    transform: translate(-50%, -50%);
+  }
+  #countdown.go { color: #7be36b; }
+  #countdown.tick { animation: count 0.9s cubic-bezier(.2,1.6,.4,1) forwards; }
+  @keyframes count { 0% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; } 25% { transform: translate(-50%, -50%) scale(1); opacity: 1; } 80% { opacity: 1; } 100% { transform: translate(-50%, -50%) scale(0.85); opacity: 0; } }
+
+  /* ---------- panels: lobby and results */
+  .panel {
+    position: fixed; inset: 0; z-index: 12; display: flex; align-items: center; justify-content: center;
+    padding: calc(12px + env(safe-area-inset-top, 0px)) 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    background: rgba(20, 52, 32, 0.45);
+  }
+  .card {
+    width: min(620px, 100%); max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    background: #1f4a2e; color: var(--cream); border-radius: 22px; padding: 18px 20px;
+    box-shadow: 0 8px 0 #12301d, 0 18px 40px rgba(0,0,0,0.35);
+    display: flex; flex-direction: column; gap: 14px; touch-action: pan-y; user-select: text; -webkit-user-select: text;
+  }
+  .card h2 { margin: 0; font: 34px/1 var(--display); color: var(--gold); text-wrap: balance; }
+  .card p { margin: 0; font: 700 15px/1.45 var(--body); color: rgba(255,244,220,0.85); max-width: 60ch; }
+  .card .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .card .grow { flex: 1 1 160px; min-width: 0; }
+  .join-url { font: 900 18px/1.2 var(--body); color: var(--cream); background: rgba(0,0,0,0.22); padding: 8px 12px; border-radius: 10px; word-break: break-all; user-select: all; -webkit-user-select: all; }
+  .card label { font: 800 13px/1 var(--body); letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,244,220,0.7); }
+  #name-input {
+    font: 22px/1 var(--display); color: var(--ink); background: var(--cream); border: 0; border-radius: 12px; padding: 10px 12px; width: 100%;
+  }
+  #name-input:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatch { width: 34px; height: 34px; border-radius: 50%; border: 3px solid transparent; padding: 0; cursor: pointer; box-shadow: inset 0 -4px 0 rgba(0,0,0,0.18); }
+  .swatch[aria-pressed="true"] { border-color: var(--cream); }
+  .swatch:disabled { opacity: 0.25; cursor: default; }
+  .players { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .players li { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); border-radius: 12px; padding: 8px 10px; font: 18px/1.1 var(--display); min-width: 0; }
+  .players li .dot { width: 16px; height: 16px; border-radius: 50%; flex: none; box-shadow: inset 0 -3px 0 rgba(0,0,0,0.2); }
+  .players li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .players li .tag { font: 800 11px/1 var(--body); text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.7; }
+  .players li.you { outline: 2px solid var(--gold); }
+  .btn {
+    font: 22px/1 var(--display); letter-spacing: 0.02em; border: 0; border-radius: 14px; padding: 12px 18px 14px; cursor: pointer;
+    background: var(--cream); color: var(--ink); box-shadow: 0 5px 0 rgba(0,0,0,0.3); transition: transform 0.06s, box-shadow 0.06s;
+  }
+  .btn:active { transform: translateY(4px); box-shadow: 0 1px 0 rgba(0,0,0,0.3); }
+  .btn.go { background: var(--gold); box-shadow: 0 5px 0 var(--mango-deep); font-size: 28px; padding: 14px 28px 16px; }
+  .btn.quiet { background: rgba(255,244,220,0.14); color: var(--cream); box-shadow: none; }
+  .btn:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .results { width: 100%; border-collapse: collapse; font: 20px/1.2 var(--display); font-variant-numeric: tabular-nums; }
+  .results td { padding: 8px 6px; border-bottom: 1px solid rgba(255,244,220,0.12); }
+  .results td.pl { width: 3.2em; color: var(--gold); }
+  .results td.tm { text-align: right; white-space: nowrap; }
+  .results td.bl { text-align: right; font: 800 13px/1.2 var(--body); opacity: 0.75; white-space: nowrap; }
+  .results tr.you td { color: var(--gold); }
+  .results .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+  .status { font: 800 15px/1.4 var(--body); color: #ffd27a; }
+
+  .lobby-card { width: min(860px, 100%); }
+  .lobby-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .lobby-grid .col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .lobby-grid .col label { margin-top: 4px; }
+  .btn.small { font-size: 17px; padding: 9px 14px 11px; }
+  #start-race { margin-top: auto; }
+  @media (min-width: 620px) {
+    .lobby-grid { grid-template-columns: 1fr 1fr; }
+    .players { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-height: 460px) {
+    .card { padding: 12px 16px; gap: 10px; border-radius: 18px; }
+    .card h2 { font-size: 26px; }
+    .join-url { font-size: 15px; padding: 6px 10px; }
+    #name-input { font-size: 18px; padding: 7px 10px; }
+    .swatch { width: 28px; height: 28px; }
+    .players li { padding: 5px 8px; font-size: 16px; }
+    .btn.go { font-size: 24px; padding: 10px 22px 12px; }
+  }
+
+  /* title buttons */
+  .menu { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: center; }
+  .linkish { background: none; border: 0; color: var(--cream); font: 800 15px/1 var(--body); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 6px; }
+
   /* phones held upright */
   #rotate {
     position: fixed; inset: 0; z-index: 20; display: none;
@@ -218,7 +330,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    #play, #speedlines, #juiced, #rotate svg { animation: none; }
+    #play, #speedlines, #juiced, #rotate svg, #wrongway, #countdown.tick { animation: none; }
   }
 </style>
 <script type="importmap">
@@ -254,6 +366,18 @@
   <div id="juiced" hidden>Juiced</div>
 </div>
 
+<div id="race-hud" class="hud" hidden>
+  <div id="place">1<sup>st</sup><small>/2</small></div>
+  <div class="race-lines">
+    <div class="chip" id="lap">Lap 1/3</div>
+    <div class="chip" id="timer">0:00.0</div>
+  </div>
+</div>
+<canvas id="minimap" width="264" height="264" aria-hidden="true"></canvas>
+<div id="wrongway" hidden>Wrong way!</div>
+<div id="spectate" hidden>Race in progress. You're in the next one</div>
+<div id="countdown" hidden></div>
+
 <div id="corner" class="hud">
   <button class="round" id="home" aria-label="Back to the title screen">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg>
@@ -285,10 +409,56 @@
 
 <div id="title">
   <h1>Kart<span>ing</span></h1>
-  <div class="arena-tag">Temple Courtyard</div>
+  <div class="arena-tag">Temple Circuit</div>
   <div class="spacer"></div>
-  <button id="play">Play</button>
+  <div class="menu">
+    <button id="play">Race a friend</button>
+    <button class="btn" id="race-bots">Race bots</button>
+  </div>
+  <button class="linkish" id="free-drive">Free drive in the courtyard</button>
   <div class="keys"><kbd>&larr;</kbd> <kbd>&rarr;</kbd> steer &nbsp;&middot;&nbsp; hold <kbd>Space</kbd> to drift &nbsp;&middot;&nbsp; let go and press again when the ring glows to boost</div>
+</div>
+
+<div id="lobby" class="panel" hidden>
+  <div class="card lobby-card" role="dialog" aria-labelledby="lobby-title">
+    <div class="row">
+      <h2 id="lobby-title" class="grow">Race a friend</h2>
+      <button class="btn quiet" id="lobby-leave">Back</button>
+    </div>
+    <p id="lobby-status" class="status">Connecting to the game server&hellip;</p>
+    <div id="lobby-body" class="lobby-grid" hidden>
+      <div class="col">
+        <label for="join-url">Friends open this on their phone</label>
+        <div class="join-url" id="join-url"></div>
+        <label for="name-input">Your name</label>
+        <input id="name-input" maxlength="14" autocomplete="nickname" spellcheck="false">
+        <label>Kart colour</label>
+        <div class="swatches" id="swatches"></div>
+      </div>
+      <div class="col">
+        <label>On the grid</label>
+        <ul class="players" id="players"></ul>
+        <div class="row">
+          <button class="btn quiet small" id="bot-add">Add bot</button>
+          <button class="btn quiet small" id="bot-remove">Remove bot</button>
+        </div>
+        <button class="btn go" id="start-race">Start race</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="results" class="panel" hidden>
+  <div class="card" role="dialog" aria-labelledby="results-title">
+    <h2 id="results-title">Results</h2>
+    <table class="results"><tbody id="results-rows"></tbody></table>
+    <p id="results-note"></p>
+    <div class="row">
+      <button class="btn quiet" id="results-back">Back</button>
+      <span class="grow"></span>
+      <button class="btn go" id="results-again">Race again</button>
+    </div>
+  </div>
 </div>
 
 <div id="rotate">

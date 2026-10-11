@@ -1,6 +1,7 @@
 // The game server: serves the game files and runs the race room.
 //   npm start                 -> http://<this-computer's-ip>:3000  (phones on the same wifi)
 //   PORT=8080 npm start       -> another port
+//   LAPS=5 npm start          -> longer races (default 3)
 // No dependencies: Node 20+ only.
 
 import http from 'node:http';
@@ -63,7 +64,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const room = new Room({ log: (m) => console.log(new Date().toLocaleTimeString(), m) });
+const room = new Room({
+  laps: Number(process.env.LAPS) || undefined,
+  log: (m) => console.log(new Date().toLocaleTimeString(), m),
+});
 room.run();
 
 attachWebSocket(server, '/ws', (ws) => {

@@ -1,21 +1,42 @@
-// Boots the game: fixed-step simulation from /shared, drawn with three.js.
-// Step 1 is solo: one kart, one arena. The loop is already shaped for multiplayer:
-// inputs go into stepWorld() at a fixed tick, and rendering interpolates between ticks.
+// Boots the game and runs the frame loop.
+//
+// What is on screen always comes from a "session":
+//   LocalSession  everything simulated on this phone (title demo, free drive, race vs bots)
+//   NetSession    a race refereed by the game server (race a friend)
+// Both step at a fixed 60 ticks/s and hand back karts to draw plus events to react to.
 
 import * as THREE from 'three';
-import { TICK, TUNING, createWorld, addKart, stepWorld, inWindow } from '@shared/sim.js';
-import { createBot, botInput } from '@shared/bot.js';
+import { TICK, TUNING, createWorld, inWindow } from '@shared/sim.js';
 import temple from '@shared/arenas/temple.js';
+import circuit from '@shared/arenas/circuit.js';
 import { buildSky, buildLights, buildArena, PALETTE } from './arena3d.js';
-import { KartModel, BOOST_COLORS } from './kartModel.js';
+import { KartModel, KART_COLORS, BOOST_COLORS } from './kartModel.js';
 import { Particles, SkidMarks, Debris, Rings } from './fx.js';
 import { Controls } from './input.js';
 import { Sound } from './audio.js';
-import { damp, dampAngle, lerp, lerpAngle } from './util.js';
+import { damp, dampAngle, lerpAngle, canvasTexture } from './util.js';
 import { loadModels, colliderOverlay } from './models.js';
+import { LocalSession } from './session-local.js';
+import { createBot, botInput, createPathBot, pathBotInput } from '@shared/bot.js';
+import { NetSession } from './session-net.js';
 
 const $ = (id) => document.getElementById(id);
 const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+const store = {
+  get(k, d) {
+    try {
+      const v = localStorage.getItem('karting.' + k);
+      return v === null ? d : JSON.parse(v);
+    } catch {
+      return d;
+    }
+  },
+  set(k, v) {
+    try {
+      localStorage.setItem('karting.' + k, JSON.stringify(v));
+    } catch {}
+  },
+};
 
 // ---------------------------------------------------------------- renderer
 
@@ -25,6 +46,7 @@ renderer.setPixelRatio(pixelRatio);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 $('stage').appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(62, 1, 0.3, 700);
 
 // Model files that replace the built-in art (models/manifest.js).
 // Add #examples to the address to try the example models instead.
@@ -33,23 +55,109 @@ const manifest = (await import(manifestUrl.href)).default;
 const models = await loadModels(manifest, manifestUrl);
 window.addEventListener('hashchange', () => location.reload());
 
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(62, 1, 0.3, 600);
+// ---------------------------------------------------------------- stages (one 3D scene per arena)
 
-buildSky(scene);
-const lights = buildLights(scene);
+const stages = new Map();
+function getStage(arena) {
+  if (stages.has(arena.id)) return stages.get(arena.id);
+  const scene = new THREE.Scene();
+  buildSky(scene);
+  const lights = buildLights(scene);
+  const world0 = createWorld(arena);
+  const stage = {
+    arena,
+    scene,
+    lights,
+    arena3d: buildArena(scene, arena, world0, models),
+    sparks: new Particles(scene, 700, { additive: true, soft: 0.2 }),
+    puffs: new Particles(scene, 600, { additive: false, soft: 0.55 }),
+    skids: new SkidMarks(scene, 900),
+    debris: new Debris(scene),
+    rings: new Rings(scene, 10),
+    colliders: colliderOverlay(scene, arena, world0, TUNING),
+    karts: new Map(), // id -> { model, tag, fx }
+  };
+  stage.colliders.visible = debug.colliders;
+  stages.set(arena.id, stage);
+  return stage;
+}
 
-// ---------------------------------------------------------------- game state
+function nameTag(name, colorIndex) {
+  const col = KART_COLORS[colorIndex % KART_COLORS.length].body;
+  const tex = canvasTexture(256, 64, (g, w, h) => {
+    g.font = '40px "Lilita One", "Trebuchet MS", sans-serif';
+    const tw = Math.min(w - 8, g.measureText(name).width + 36);
+    g.fillStyle = 'rgba(52,38,24,0.7)';
+    g.beginPath();
+    g.roundRect((w - tw) / 2, 6, tw, h - 12, 26);
+    g.fill();
+    g.fillStyle = col;
+    g.beginPath();
+    g.arc((w - tw) / 2 + 20, h / 2, 8, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#fff4dc';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(name, w / 2 + 8, h / 2 + 2);
+  });
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true }));
+  s.scale.set(3.4, 0.85, 1);
+  s.position.y = 3.4;
+  s.renderOrder = 5;
+  return s;
+}
 
-let world;
-let kart;
-let arena3d;
-const model = new KartModel(scene, { colorIndex: 0, number: 1, model: models.kart });
-const sparks = new Particles(scene, 500, { additive: true, soft: 0.2 });
-const puffs = new Particles(scene, 420, { additive: false, soft: 0.55 });
-const skids = new SkidMarks(scene);
-const debris = new Debris(scene);
-const rings = new Rings(scene);
+function kartVisual(stage, id, v, index) {
+  const color = v.colors[id] ?? index;
+  const name = v.names[id] || '';
+  let kv = stage.karts.get(id);
+  if (kv && (kv.color !== color || kv.name !== name)) {
+    stage.scene.remove(kv.model.root);
+    kv = null;
+  }
+  if (!kv) {
+    const model = new KartModel(stage.scene, { colorIndex: color, number: index + 1, model: models.kart });
+    kv = {
+      model,
+      color,
+      name,
+      tag: null,
+      fx: { contacts: [new THREE.Vector3(), new THREE.Vector3()], last: [new THREE.Vector3(), new THREE.Vector3()], had: false, spark: 0, dust: 0, flame: 0, glitter: 0 },
+    };
+    stage.karts.set(id, kv);
+  }
+  const wantTag = id !== v.localId && name && v !== attract;
+  if (wantTag && !kv.tag) {
+    kv.tag = nameTag(name, color);
+    kv.model.root.add(kv.tag);
+  } else if (!wantTag && kv.tag) {
+    kv.model.root.remove(kv.tag);
+    kv.tag = null;
+  }
+  return kv;
+}
+
+function clearKarts(stage) {
+  for (const kv of stage.karts.values()) stage.scene.remove(kv.model.root);
+  stage.karts.clear();
+}
+
+// ---------------------------------------------------------------- sessions and modes
+
+const debug = { autopilot: false, colliders: false };
+let mode = 'title'; // 'title' | 'drive' | 'bots' | 'online'
+let session = null; // the local session being played (drive / bots)
+let net = null;
+let attract = new LocalSession(circuit, { player: false, bots: 3 });
+let shown = null; // the session drawn last frame
+
+/** the session to draw and step this frame */
+function view() {
+  if (mode === 'drive' || mode === 'bots') return session;
+  if (mode === 'online' && net && net.phase !== 'lobby' && net.localId) return net;
+  return attract;
+}
+
 const sound = new Sound();
 const controls = new Controls({
   steerZone: $('steer-zone'),
@@ -59,75 +167,278 @@ const controls = new Controls({
   driftBtn: $('drift-btn'),
 });
 
-let mode = 'attract'; // 'attract' | 'play'
-let bot = createBot();
-const prev = { x: 0, z: 0, yaw: 0 };
-const pose = { x: 0, z: 0, yaw: 0 };
+let playerName = store.get('name', '');
+let playerColor = store.get('color', 0);
 
-function newWorld(attract = false) {
-  world = createWorld(temple);
-  kart = addKart(world, 'me', 0);
-  bot = createBot();
-  if (attract) {
-    // the demo driver starts on the ring around the temple, already rolling
-    Object.assign(kart, { x: 0, z: -16, yaw: Math.PI / 2, vx: 18, vz: 0 });
-  }
-  Object.assign(prev, { x: kart.x, z: kart.z, yaw: kart.yaw });
+function goFullscreen() {
+  try {
+    const el = document.documentElement;
+    const fs = el.requestFullscreen?.({ navigationUI: 'hide' }) || el.webkitRequestFullscreen?.();
+    Promise.resolve(fs)
+      .then(() => screen.orientation?.lock?.('landscape'))
+      .catch(() => {});
+  } catch {}
+  try {
+    navigator.wakeLock?.request('screen').catch(() => {});
+  } catch {}
 }
-newWorld(true);
-arena3d = buildArena(scene, temple, world, models);
-const colliders = colliderOverlay(scene, temple, world, TUNING);
+
+function setPlaying(on) {
+  document.body.classList.toggle('playing', on);
+  if (!on) {
+    document.body.classList.remove('racing');
+    for (const id of ['wrongway', 'spectate', 'countdown', 'race-hud']) $(id).hidden = true;
+  }
+  controls.enabled = on;
+  controls.reset();
+}
+
+function startLocal(kind) {
+  sound.start();
+  sound.click();
+  goFullscreen();
+  closeNet();
+  mode = kind;
+  session =
+    kind === 'bots'
+      ? new LocalSession(circuit, { player: true, bots: 3, race: true, name: playerName || 'You', color: playerColor })
+      : new LocalSession(temple, { player: true, name: playerName || 'You', color: playerColor });
+  $('lobby').hidden = true;
+  setPlaying(true);
+  snapCamera = true;
+}
+
+function startOnline() {
+  sound.start();
+  sound.click();
+  goFullscreen();
+  mode = 'online';
+  session = null;
+  showLobby();
+  if (net && net.status === 'open') return;
+  closeNet();
+  net = new NetSession(circuit, {
+    name: playerName,
+    color: playerColor,
+    onLobby: () => renderLobby(),
+    onStatus: () => renderLobby(),
+  });
+}
+
+function closeNet() {
+  if (net) net.close();
+  net = null;
+}
+
+function toTitle() {
+  closeNet();
+  mode = 'title';
+  session = null;
+  $('lobby').hidden = true;
+  $('results').hidden = true;
+  setPlaying(false);
+  snapCamera = true;
+}
+
+// ---------------------------------------------------------------- lobby screen
+
+function showLobby() {
+  $('lobby').hidden = false;
+  $('results').hidden = true;
+  setPlaying(false);
+  renderLobby();
+}
+
+function renderLobby() {
+  if (mode !== 'online' || !net) return;
+  const status = $('lobby-status');
+  const body = $('lobby-body');
+  if (net.status === 'connecting') {
+    status.textContent = 'Connecting to the game server…';
+    body.hidden = true;
+  } else if (net.status === 'failed' || net.status === 'closed') {
+    status.textContent =
+      net.why === 'full'
+        ? 'This race is full (8 karts).'
+        : "Can't reach the game server. Racing a friend needs the game running on a computer or server: run npm start there, then open the address it prints on both phones.";
+    body.hidden = true;
+  } else {
+    status.textContent = net.lobby && net.lobby.phase !== 'lobby' ? 'A race is on. You will be on the grid for the next one.' : '';
+    body.hidden = false;
+  }
+  const lobby = net.lobby;
+  if (!lobby) return;
+
+  const host = location.hostname;
+  const local = host === 'localhost' || host === '127.0.0.1';
+  $('join-url').textContent = local ? 'Use this computer’s wifi address from the server window, e.g. http://192.168.x.x:' + (location.port || 80) : location.origin + '/';
+
+  const list = $('players');
+  list.replaceChildren(
+    ...lobby.players.map((p) => {
+      const li = document.createElement('li');
+      if (p.id === net.localId) li.className = 'you';
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = KART_COLORS[p.color % 8].body;
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = p.name;
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = p.bot ? 'bot' : p.id === net.localId ? 'you' : p.ping ? p.ping + ' ms' : '';
+      li.append(dot, nm, tag);
+      return li;
+    }),
+  );
+
+  const used = new Set(lobby.players.filter((p) => p.id !== net.localId).map((p) => p.color));
+  const me = lobby.players.find((p) => p.id === net.localId);
+  if (me) playerColor = me.color;
+  const sw = $('swatches');
+  sw.replaceChildren(
+    ...KART_COLORS.map((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch';
+      b.style.background = c.body;
+      b.setAttribute('aria-label', 'Kart colour ' + (i + 1));
+      b.setAttribute('aria-pressed', String(i === playerColor));
+      b.disabled = used.has(i);
+      b.addEventListener('click', () => {
+        playerColor = i;
+        store.set('color', i);
+        net.rename($('name-input').value, i);
+      });
+      return b;
+    }),
+  );
+  const input = $('name-input');
+  if (document.activeElement !== input && me) input.value = me.name;
+
+  const bots = lobby.players.filter((p) => p.bot).length;
+  $('bot-add').disabled = lobby.players.length >= 8 || lobby.phase !== 'lobby';
+  $('bot-remove').disabled = bots === 0 || lobby.phase !== 'lobby';
+  $('start-race').disabled = lobby.phase !== 'lobby';
+}
+
+$('play').addEventListener('click', startOnline);
+$('race-bots').addEventListener('click', () => startLocal('bots'));
+$('free-drive').addEventListener('click', () => startLocal('drive'));
+$('lobby-leave').addEventListener('click', () => {
+  sound.click();
+  toTitle();
+});
+$('bot-add').addEventListener('click', () => net && net.addBot());
+$('bot-remove').addEventListener('click', () => net && net.removeBot());
+$('start-race').addEventListener('click', () => {
+  sound.click();
+  if (net) net.start();
+});
+$('name-input').addEventListener('change', (e) => {
+  playerName = e.target.value.trim().slice(0, 14);
+  store.set('name', playerName);
+  if (net) net.rename(playerName, playerColor);
+});
+$('name-input').addEventListener('keydown', (e) => e.stopPropagation());
+
+// ---------------------------------------------------------------- results screen
+
+const fmt = (t) => {
+  if (t === null || t === undefined) return '–';
+  const m = Math.floor(t / 60);
+  const s = t - m * 60;
+  return `${m}:${s.toFixed(2).padStart(5, '0')}`;
+};
+const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10] || 'th');
+
+function renderResults(v, info) {
+  const rows = Object.entries(info.entrants).sort((a, b) => a[1].place - b[1].place);
+  $('results-rows').replaceChildren(
+    ...rows.map(([id, e]) => {
+      const tr = document.createElement('tr');
+      if (id === v.localId) tr.className = 'you';
+      const pl = document.createElement('td');
+      pl.className = 'pl';
+      pl.textContent = ordinal(e.place);
+      const nm = document.createElement('td');
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = KART_COLORS[(v.colors[id] ?? 0) % 8].body;
+      nm.append(dot, document.createTextNode(v.names[id] || id));
+      const tm = document.createElement('td');
+      tm.className = 'tm';
+      tm.textContent = e.finished ? fmt(e.finishTime) : 'Did not finish';
+      const bl = document.createElement('td');
+      bl.className = 'bl';
+      bl.textContent = e.bestLap ? 'best lap ' + fmt(e.bestLap) : '';
+      tr.append(pl, nm, tm, bl);
+      return tr;
+    }),
+  );
+  const mine = info.entrants[v.localId];
+  $('results-title').textContent = mine ? (mine.place === 1 ? 'You won!' : `You finished ${ordinal(mine.place)}`) : 'Results';
+  $('results-note').textContent = v.online ? 'Anyone can start the next race.' : '';
+  $('results-again').hidden = false;
+}
+
+$('results-again').addEventListener('click', () => {
+  sound.click();
+  $('results').hidden = true;
+  if (mode === 'online' && net) net.start();
+  else if (session) {
+    session.restart();
+    snapCamera = true;
+  }
+});
+$('results-back').addEventListener('click', () => {
+  sound.click();
+  $('results').hidden = true;
+  if (mode === 'online' && net) net.toLobby();
+  else toTitle();
+});
 
 // ---------------------------------------------------------------- camera
 
-const cam = {
-  yaw: kart.yaw,
-  fov: 62,
-  trauma: 0,
-  pos: new THREE.Vector3(),
-  look: new THREE.Vector3(),
-  orbit: 0,
-  punch: 0,
-};
+const cam = { yaw: 0, fov: 62, trauma: 0, pos: new THREE.Vector3(), look: new THREE.Vector3(), orbit: 0, punch: 0 };
+let snapCamera = true;
 
 function baseFov() {
   return camera.aspect > 1.9 ? 54 : camera.aspect < 1 ? 74 : 62;
 }
 
-function snapCamera() {
-  cam.yaw = kart.yaw;
-  cam.fov = baseFov();
-  cam.trauma = 0;
-  cam.pos.set(kart.x - Math.sin(kart.yaw) * 7.5, 3.4, kart.z - Math.cos(kart.yaw) * 7.5);
-  cam.look.set(kart.x, 1, kart.z);
-}
-snapCamera();
-
 const shakeVec = new THREE.Vector3();
-function updateCamera(dt, t) {
-  const speed = Math.hypot(kart.vx, kart.vz);
-  if (mode === 'attract') {
+function updateCamera(dt, t, target, follow) {
+  if (!target) return;
+  const { pose, k } = target;
+  const speed = Math.hypot(k.vx, k.vz);
+  if (snapCamera) {
+    cam.yaw = pose.yaw;
+    cam.fov = baseFov();
+    cam.trauma = 0;
+    cam.pos.set(pose.x - Math.sin(pose.yaw) * 7, 3.2, pose.z - Math.cos(pose.yaw) * 7);
+    snapCamera = false;
+  }
+  if (!follow) {
+    // slow orbit for the title screen and lobby
     cam.orbit += dt * 0.16;
-    const r = 12.5;
-    const tx = pose.x + Math.sin(cam.orbit) * r;
-    const tz = pose.z + Math.cos(cam.orbit) * r;
-    cam.pos.x = damp(cam.pos.x, tx, 2.2, dt);
-    cam.pos.y = damp(cam.pos.y, 5.2, 2.2, dt);
-    cam.pos.z = damp(cam.pos.z, tz, 2.2, dt);
+    const r = 13;
+    cam.pos.x = damp(cam.pos.x, pose.x + Math.sin(cam.orbit) * r, 2.2, dt);
+    cam.pos.y = damp(cam.pos.y, 5.4, 2.2, dt);
+    cam.pos.z = damp(cam.pos.z, pose.z + Math.cos(cam.orbit) * r, 2.2, dt);
     cam.look.set(pose.x, 1.1, pose.z);
     cam.fov = damp(cam.fov, baseFov() + 4, 2, dt);
   } else {
-    // follow the direction of travel while sliding, the nose otherwise
-    const velYaw = Math.atan2(kart.vx, kart.vz);
-    const target = kart.state === 'drift' && speed > 3 ? lerpAngle(pose.yaw, velYaw, 0.6) : pose.yaw;
-    cam.yaw = dampAngle(cam.yaw, target, kart.state === 'drift' ? 3.2 : 4.5, dt);
-    const boosting = kart.boostT > 0;
+    const velYaw = Math.atan2(k.vx, k.vz);
+    const tgt = k.state === 'drift' && speed > 3 ? lerpAngle(pose.yaw, velYaw, 0.6) : pose.yaw;
+    cam.yaw = dampAngle(cam.yaw, tgt, k.state === 'drift' ? 3.2 : 4.5, dt);
+    const boosting = k.boostT > 0;
     const dist = 6.6 + speed * 0.05 + (boosting ? 0.9 : 0);
     cam.pos.x = pose.x - Math.sin(cam.yaw) * dist;
     cam.pos.z = pose.z - Math.cos(cam.yaw) * dist;
-    cam.pos.y = damp(cam.pos.y, 3.1 + model.lift.position.y * 0.5, 6, dt);
-    cam.look.set(pose.x + Math.sin(cam.yaw) * 4, 1.0 + model.lift.position.y * 0.4, pose.z + Math.cos(cam.yaw) * 4);
-    const fovT = baseFov() + speed * 0.12 + (boosting ? 8 + kart.boostLevel * 2 : 0) + cam.punch;
+    const lift = target.model ? target.model.lift.position.y : 0;
+    cam.pos.y = damp(cam.pos.y, 3.1 + lift * 0.5, 6, dt);
+    cam.look.set(pose.x + Math.sin(cam.yaw) * 4, 1.0 + lift * 0.4, pose.z + Math.cos(cam.yaw) * 4);
+    const fovT = baseFov() + speed * 0.12 + (boosting ? 8 + k.boostLevel * 2 : 0) + cam.punch;
     cam.fov = damp(cam.fov, fovT, boosting ? 7 : 4, dt);
     cam.punch = damp(cam.punch, 0, 5, dt);
   }
@@ -147,9 +458,7 @@ function updateCamera(dt, t) {
   }
 }
 
-function addTrauma(v) {
-  cam.trauma = Math.min(1, cam.trauma + v);
-}
+const addTrauma = (v) => (cam.trauma = Math.min(1, cam.trauma + v));
 
 // ---------------------------------------------------------------- HUD
 
@@ -157,7 +466,6 @@ const hud = {
   fruit: $('fruit-count'),
   fruitBox: $('fruit-box'),
   crates: $('crate-count'),
-  crateBox: $('crate-box'),
   juiced: $('juiced'),
   callout: $('callout'),
   ring: $('charge-ring'),
@@ -165,6 +473,14 @@ const hud = {
   pips: [...document.querySelectorAll('#pips i')],
   speedlines: $('speedlines'),
   flyers: $('flyers'),
+  race: $('race-hud'),
+  place: $('place'),
+  lap: $('lap'),
+  timer: $('timer'),
+  wrong: $('wrongway'),
+  spectate: $('spectate'),
+  count: $('countdown'),
+  minimap: $('minimap'),
 };
 const RING_LEN = 2 * Math.PI * 44;
 
@@ -175,19 +491,32 @@ function bump(el) {
 }
 
 let calloutTimer = 0;
-function callout(text, cls = '') {
+function callout(text, cls = '', ms = 900) {
   const el = hud.callout;
   el.textContent = text;
   el.className = '';
   void el.offsetWidth;
   el.className = 'show ' + cls;
   clearTimeout(calloutTimer);
-  calloutTimer = setTimeout(() => (el.className = ''), 900);
+  calloutTimer = setTimeout(() => (el.className = ''), ms);
+}
+
+let countTimer = 0;
+let lastCount = null;
+function showCount(text, go = false) {
+  lastCount = go ? null : Number(text);
+  const el = hud.count;
+  el.hidden = false;
+  el.textContent = text;
+  el.className = '';
+  void el.offsetWidth;
+  el.className = 'tick' + (go ? ' go' : '');
+  clearTimeout(countTimer);
+  countTimer = setTimeout(() => (el.hidden = true), 900);
 }
 
 const projV = new THREE.Vector3();
 function flyMango(x, z) {
-  if (mode !== 'play') return;
   projV.set(x, 1.1, z).project(camera);
   if (projV.z > 1) return;
   const sx = (projV.x * 0.5 + 0.5) * window.innerWidth;
@@ -212,44 +541,148 @@ function flyMango(x, z) {
   setTimeout(() => el.isConnected && done(), 800);
 }
 
-function updateHud() {
-  hud.fruit.textContent = kart.fruit;
-  hud.crates.textContent = kart.crates;
-  hud.juiced.hidden = kart.fruit < TUNING.fruitMax;
+// minimap: the track outline drawn once, karts drawn every few frames
+const mini = { ctx: hud.minimap.getContext('2d'), base: null, frame: 0 };
+function miniTransform(arena) {
+  const pts = arena.track.center;
+  const xs = pts.map((p) => p.x);
+  const zs = pts.map((p) => p.z);
+  const minX = Math.min(...xs) - 10;
+  const maxX = Math.max(...xs) + 10;
+  const minZ = Math.min(...zs) - 10;
+  const maxZ = Math.max(...zs) + 10;
+  const size = hud.minimap.width;
+  const sc = (size - 16) / Math.max(maxX - minX, maxZ - minZ);
+  // +x east is screen-left from the start line's chase view... keep north up, east right
+  return (x, z) => [size / 2 - (x - (minX + maxX) / 2) * sc, size / 2 - (z - (minZ + maxZ) / 2) * sc];
+}
+function drawMinimap(v, list) {
+  const arena = v.arena;
+  if (!arena.track) return;
+  if (!mini.base || mini.base.arena !== arena) {
+    const tf = miniTransform(arena);
+    const c = document.createElement('canvas');
+    c.width = c.height = hud.minimap.width;
+    const g = c.getContext('2d');
+    g.lineJoin = 'round';
+    g.beginPath();
+    arena.track.center.forEach((p, i) => {
+      const [x, y] = tf(p.x, p.z);
+      if (i) g.lineTo(x, y);
+      else g.moveTo(x, y);
+    });
+    g.closePath();
+    g.strokeStyle = 'rgba(59,36,18,0.85)';
+    g.lineWidth = 16;
+    g.stroke();
+    g.strokeStyle = '#e8c48a';
+    g.lineWidth = 9;
+    g.stroke();
+    const g0 = arena.track.gates[0];
+    const [ax, ay] = tf(g0.x1, g0.z1);
+    const [bx, by] = tf(g0.x2, g0.z2);
+    g.strokeStyle = '#fff4dc';
+    g.lineWidth = 4;
+    g.beginPath();
+    g.moveTo(ax, ay);
+    g.lineTo(bx, by);
+    g.stroke();
+    mini.base = { arena, canvas: c, tf };
+  }
+  const g = mini.ctx;
+  g.clearRect(0, 0, hud.minimap.width, hud.minimap.height);
+  g.drawImage(mini.base.canvas, 0, 0);
+  const sorted = [...list].sort((a, b) => (a.id === v.localId) - (b.id === v.localId));
+  for (const it of sorted) {
+    const [x, y] = mini.base.tf(it.pose.x, it.pose.z);
+    const me = it.id === v.localId;
+    g.beginPath();
+    g.arc(x, y, me ? 10 : 7, 0, Math.PI * 2);
+    g.fillStyle = KART_COLORS[(v.colors[it.id] ?? 0) % 8].body;
+    g.fill();
+    g.lineWidth = me ? 4 : 2.5;
+    g.strokeStyle = me ? '#fff4dc' : '#3b2412';
+    g.stroke();
+  }
+}
 
-  const drifting = kart.state === 'drift';
-  const c = drifting ? Math.min(kart.charge, 1) : 0;
-  hud.ring.style.strokeDashoffset = String(RING_LEN * (1 - c));
-  const hot = drifting && kart.pumps < TUNING.maxPumps && inWindow(kart.charge);
-  const late = drifting && kart.charge > TUNING.windowHi;
-  hud.btn.classList.toggle('hot', hot);
-  hud.btn.classList.toggle('late', late);
-  hud.btn.classList.toggle('drifting', drifting);
-  hud.pips.forEach((p, i) => p.classList.toggle('on', drifting && i < kart.pumps));
-  hud.btn.style.setProperty('--next', BOOST_COLORS[Math.min(kart.pumps + 1, 3)]);
+let resultsShownFor = null;
+function updateHud(v, list, local) {
+  const k = local ? local.k : null;
+  if (k) {
+    hud.fruit.textContent = k.fruit;
+    hud.crates.textContent = k.crates;
+    hud.juiced.hidden = k.fruit < TUNING.fruitMax;
+    const drifting = k.state === 'drift';
+    const c = drifting ? Math.min(k.charge, 1) : 0;
+    hud.ring.style.strokeDashoffset = String(RING_LEN * (1 - c));
+    const hot = drifting && k.pumps < TUNING.maxPumps && inWindow(k.charge);
+    hud.btn.classList.toggle('hot', hot);
+    hud.btn.classList.toggle('late', drifting && k.charge > TUNING.windowHi);
+    hud.btn.classList.toggle('drifting', drifting);
+    hud.pips.forEach((p, i) => p.classList.toggle('on', drifting && i < k.pumps));
+    hud.btn.style.setProperty('--next', BOOST_COLORS[Math.min(k.pumps + 1, 3)]);
+    hud.speedlines.style.opacity = String(k.boostT > 0 ? 0.35 + k.boostLevel * 0.2 : 0);
+  } else {
+    hud.speedlines.style.opacity = '0';
+  }
 
-  const lines = kart.boostT > 0 ? 0.35 + kart.boostLevel * 0.2 : 0;
-  hud.speedlines.style.opacity = String(lines);
+  const info = mode === 'title' ? null : v.raceInfo();
+  const racing = !!info;
+  document.body.classList.toggle('racing', racing);
+  hud.race.hidden = !racing;
+  if (!racing) {
+    hud.wrong.hidden = true;
+    hud.spectate.hidden = true;
+    return;
+  }
+  const e = info.entrants[v.localId];
+  const total = Object.keys(info.entrants).length;
+  if (e) {
+    hud.place.innerHTML = `${e.place}<sup>${ordinal(e.place).slice(-2)}</sup><small>/${total}</small>`;
+    hud.place.classList.toggle('first', e.place === 1);
+    hud.lap.textContent = e.finished ? 'Finished' : `Lap ${Math.min(Math.max(e.lap, 1), info.laps)}/${info.laps}`;
+    hud.timer.textContent = fmt(e.finished ? e.finishTime : info.phase === 'countdown' ? 0 : info.t);
+  } else {
+    hud.place.innerHTML = '';
+    hud.lap.textContent = `${info.laps} laps`;
+    hud.timer.textContent = fmt(info.phase === 'countdown' ? 0 : info.t);
+  }
+  hud.wrong.hidden = !(e && e.wrongWay && info.phase === 'race');
+  hud.spectate.hidden = !(v.online && !e && info.phase !== 'results');
+  if (++mini.frame % 3 === 0) drawMinimap(v, list);
+
+  if (info.phase === 'countdown') {
+    // show the number we are on if the event was missed (joining mid-countdown)
+    const n = Math.ceil(info.countdown);
+    if (n !== lastCount && n > 0 && n <= 3) showCount(String(n));
+  }
+  if (info.phase === 'results') {
+    const key = v.online ? 'net' + (info.firstFinish ?? 0) : session;
+    if (resultsShownFor !== key) {
+      resultsShownFor = key;
+      setTimeout(() => {
+        if (view() !== v || !v.raceInfo() || v.raceInfo().phase !== 'results') return;
+        renderResults(v, v.raceInfo());
+        $('results').hidden = false;
+      }, 1400);
+    }
+  } else {
+    if (!$('results').hidden && resultsShownFor) $('results').hidden = true;
+    resultsShownFor = null;
+  }
 }
 
 // ---------------------------------------------------------------- effects
 
-const contacts = [new THREE.Vector3(), new THREE.Vector3()];
-const lastContacts = [new THREE.Vector3(), new THREE.Vector3()];
-let hadContacts = false;
-const exhausts = [new THREE.Vector3(), new THREE.Vector3()];
-let sparkAcc = 0;
-let dustAcc = 0;
-let flameAcc = 0;
-let glitterAcc = 0;
-let prevCharge = 0;
 const rnd = Math.random;
+const exhausts = [new THREE.Vector3(), new THREE.Vector3()];
 
-function dustBurst(x, z, n, color = PALETTE.sand, spread = 4) {
+function dustBurst(stage, x, z, n, color = PALETTE.sand, spread = 4) {
   for (let i = 0; i < n; i++) {
     const a = rnd() * Math.PI * 2;
     const s = spread * (0.4 + rnd() * 0.6);
-    puffs.emit({
+    stage.puffs.emit({
       x: x + Math.sin(a) * 0.4, y: 0.3, z: z + Math.cos(a) * 0.4,
       vx: Math.sin(a) * s, vy: 1 + rnd() * 2, vz: Math.cos(a) * s,
       life: 0.5 + rnd() * 0.4, size: 0.9, size1: 2.2, color, alpha: 0.7, drag: 3,
@@ -257,214 +690,249 @@ function dustBurst(x, z, n, color = PALETTE.sand, spread = 4) {
   }
 }
 
-function onEvents(events) {
+function onEvents(v, stage, events, byId) {
+  const local = v.localId;
+  const near = (x, z) => {
+    const me = byId.get(local);
+    return me ? Math.hypot(me.pose.x - x, me.pose.z - z) < 30 : true;
+  };
   for (const e of events) {
+    const it = e.kart ? byId.get(e.kart) : null;
+    const kv = e.kart ? stage.karts.get(e.kart) : null;
+    const mine = e.kart === local;
+    const play = mode !== 'title' && (mine || (it && near(it.pose.x, it.pose.z)));
     switch (e.type) {
       case 'hop':
-        model.kick('hop');
-        sound.hop();
-        dustBurst(kart.x, kart.z, 5, PALETTE.sand, 2.5);
+        kv?.model.kick('hop');
+        if (mine) sound.hop();
+        if (it) dustBurst(stage, it.pose.x, it.pose.z, 5, PALETTE.sand, 2.5);
         break;
       case 'land':
-        model.kick('land');
-        sound.land();
+        kv?.model.kick('land');
+        if (mine) sound.land();
         break;
       case 'boost':
-        model.kick('boost', 0.6 + e.level * 0.3);
-        sound.boost(e.level);
-        rings.spawn(kart.x, 0.15, kart.z, BOOST_COLORS[e.level], { r0: 1, r1: 5 + e.level, life: 0.4 });
-        cam.punch = 4 + e.level * 2;
-        addTrauma(0.12 + e.level * 0.05);
-        if (mode === 'play') callout(['', 'Boost!', 'Double!', 'Triple!'][e.level], 'lv' + e.level);
+        kv?.model.kick('boost', 0.6 + e.level * 0.3);
+        if (it) stage.rings.spawn(it.pose.x, 0.15, it.pose.z, BOOST_COLORS[e.level], { r0: 1, r1: 5 + e.level, life: 0.4 });
+        if (mine) {
+          sound.boost(e.level);
+          cam.punch = 4 + e.level * 2;
+          addTrauma(0.12 + e.level * 0.05);
+          if (mode !== 'title') callout(['', 'Boost!', 'Double!', 'Triple!'][e.level], 'lv' + e.level);
+        }
         break;
       case 'fizzle':
-        sound.fizzle();
-        model.exhausts(exhausts);
-        for (let i = 0; i < 10; i++) {
-          const p = exhausts[i % 2];
-          puffs.emit({ x: p.x, y: p.y, z: p.z, vx: (rnd() - 0.5) * 2, vy: 1.5 + rnd(), vz: (rnd() - 0.5) * 2, life: 0.7, size: 0.6, size1: 1.8, color: '#3b3433', alpha: 0.75, drag: 2, floor: false });
+        if (kv) {
+          kv.model.exhausts(exhausts);
+          for (let i = 0; i < 10; i++) {
+            const p = exhausts[i % 2];
+            stage.puffs.emit({ x: p.x, y: p.y, z: p.z, vx: (rnd() - 0.5) * 2, vy: 1.5 + rnd(), vz: (rnd() - 0.5) * 2, life: 0.7, size: 0.6, size1: 1.8, color: '#3b3433', alpha: 0.75, drag: 2, floor: false });
+          }
         }
-        if (mode === 'play') callout(e.late ? 'Too late' : 'Too early', 'miss');
+        if (mine) {
+          sound.fizzle();
+          if (mode !== 'title') callout(e.late ? 'Too late' : 'Too early', 'miss');
+        }
         break;
       case 'bonk':
-        model.kick('bonk', Math.min(1.4, e.impact / 12));
-        sound.bonk(e.impact);
-        addTrauma(Math.min(0.6, e.impact / 30));
-        dustBurst(e.x, e.z, 8, PALETTE.stoneLight, 5);
+        kv?.model.kick('bonk', Math.min(1.4, e.impact / 12));
+        if (mine) {
+          sound.bonk(e.impact);
+          addTrauma(Math.min(0.6, e.impact / 30));
+        }
+        dustBurst(stage, e.x, e.z, 8, PALETTE.stoneLight, 5);
         for (let i = 0; i < 10; i++) {
-          sparks.emit({ x: e.x, y: 0.8, z: e.z, vx: (rnd() - 0.5) * 12, vy: 2 + rnd() * 5, vz: (rnd() - 0.5) * 12, life: 0.3 + rnd() * 0.2, size: 0.35, size1: 0.05, color: '#fff3c4', gravity: 18, drag: 2 });
+          stage.sparks.emit({ x: e.x, y: 0.8, z: e.z, vx: (rnd() - 0.5) * 12, vy: 2 + rnd() * 5, vz: (rnd() - 0.5) * 12, life: 0.3 + rnd() * 0.2, size: 0.35, size1: 0.05, color: '#fff3c4', gravity: 18, drag: 2 });
         }
         break;
+      case 'bump': {
+        const a = stage.karts.get(e.a);
+        const b = stage.karts.get(e.b);
+        a?.model.kick('bonk', Math.min(1, e.impact / 10));
+        b?.model.kick('bonk', Math.min(1, e.impact / 10));
+        if (e.a === local || e.b === local) {
+          sound.bonk(e.impact);
+          addTrauma(Math.min(0.5, e.impact / 25));
+        }
+        for (let i = 0; i < 12; i++) {
+          stage.sparks.emit({ x: e.x, y: 0.7, z: e.z, vx: (rnd() - 0.5) * 10, vy: 2 + rnd() * 4, vz: (rnd() - 0.5) * 10, life: 0.3, size: 0.4, size1: 0.05, color: '#ffe08a', gravity: 16, drag: 2 });
+        }
+        break;
+      }
       case 'crate':
-        arena3d.crates.smash(e.index);
-        model.kick('crate');
-        sound.crate();
-        addTrauma(0.28);
-        cam.punch = 3;
-        debris.burst(e.x, 0.8, e.z, e.vx, e.vz, [PALETTE.wood, PALETTE.woodDark, '#d9934f', '#ffd36b'], 16, rnd);
-        dustBurst(e.x, e.z, 10, '#d8b27a', 6);
-        rings.spawn(e.x, 0.15, e.z, '#ffd36b', { r0: 0.5, r1: 4, life: 0.35, alpha: 0.7 });
+        stage.arena3d.crates.smash(e.index);
+        kv?.model.kick('crate');
+        if (play) sound.crate();
+        if (mine) {
+          addTrauma(0.28);
+          cam.punch = 3;
+        }
+        stage.debris.burst(e.x, 0.8, e.z, e.vx, e.vz, [PALETTE.wood, PALETTE.woodDark, '#d9934f', '#ffd36b'], 16, rnd);
+        dustBurst(stage, e.x, e.z, 10, '#d8b27a', 6);
+        stage.rings.spawn(e.x, 0.15, e.z, '#ffd36b', { r0: 0.5, r1: 4, life: 0.35, alpha: 0.7 });
         break;
       case 'crateBack': {
-        const c = world.crates[e.index];
-        arena3d.crates.respawn(e.index);
-        dustBurst(c.x, c.z, 6, '#ffffff', 3);
+        const c = stage.arena3d.crates.items[e.index];
+        stage.arena3d.crates.respawn(e.index);
+        if (c) dustBurst(stage, c.x, c.z, 6, '#ffffff', 3);
         break;
       }
       case 'fruit':
-        arena3d.mangoes.take(e.index);
-        sound.fruit();
-        flyMango(e.x, e.z);
+        stage.arena3d.mangoes.take(e.index);
+        if (mine) {
+          sound.fruit();
+          if (mode !== 'title') flyMango(e.x, e.z);
+        }
         for (let i = 0; i < 8; i++) {
           const a = (i / 8) * Math.PI * 2;
-          sparks.emit({ x: e.x, y: 1.1, z: e.z, vx: Math.sin(a) * 4, vy: 2 + rnd() * 2, vz: Math.cos(a) * 4, life: 0.35, size: 0.4, size1: 0.05, color: '#ffc23d', gravity: 6, drag: 3 });
+          stage.sparks.emit({ x: e.x, y: 1.1, z: e.z, vx: Math.sin(a) * 4, vy: 2 + rnd() * 2, vz: Math.cos(a) * 4, life: 0.35, size: 0.4, size1: 0.05, color: '#ffc23d', gravity: 6, drag: 3 });
         }
         break;
       case 'fruitBack':
-        arena3d.mangoes.respawn(e.index);
+        stage.arena3d.mangoes.respawn(e.index);
+        break;
+      case 'fruitLost':
+        if (it) {
+          for (let i = 0; i < 6; i++) stage.sparks.emit({ x: it.pose.x, y: 1.2, z: it.pose.z, vx: (rnd() - 0.5) * 6, vy: 4 + rnd() * 3, vz: (rnd() - 0.5) * 6, life: 0.6, size: 0.55, size1: 0.2, color: '#ffa424', gravity: 14, drag: 1 });
+        }
         break;
       case 'juiced':
-        sound.juiced();
-        if (mode === 'play') callout('Juiced!', 'juiced');
-        rings.spawn(kart.x, 0.2, kart.z, '#ffc23d', { r0: 1, r1: 8, life: 0.6 });
+        if (mine) {
+          sound.juiced();
+          if (mode !== 'title') callout('Juiced!', 'juiced');
+        }
+        if (it) stage.rings.spawn(it.pose.x, 0.2, it.pose.z, '#ffc23d', { r0: 1, r1: 8, life: 0.6 });
+        break;
+      // ---- race events
+      case 'count':
+        if (mode !== 'title') sound.tone('square', 440, 440, 0.18, 0.12);
+        break;
+      case 'go':
+        if (mode !== 'title') {
+          showCount('GO!', true);
+          sound.tone('square', 880, 880, 0.35, 0.14);
+        }
+        break;
+      case 'finalLap':
+        if (mine) {
+          callout('Final lap!', 'juiced', 1400);
+          sound.juiced();
+        }
+        break;
+      case 'lap':
+        if (mine && mode !== 'title') sound.tone('triangle', 660, 990, 0.15, 0.1);
+        break;
+      case 'finish':
+        if (mine) {
+          callout(e.place === 1 ? 'You win!' : ordinal(e.place) + '!', e.place === 1 ? 'juiced' : 'lv1', 1800);
+          sound.juiced();
+        }
+        break;
+      case 'rescue':
+        if (it) stage.rings.spawn(it.pose.x, 0.2, it.pose.z, '#9fe1ff', { r0: 0.5, r1: 4, life: 0.5 });
+        if (mine) snapCamera = true;
+        break;
+      case 'raceStart':
+        clearKarts(stage);
+        snapCamera = true;
+        $('results').hidden = true;
         break;
       default:
     }
   }
 }
 
-function frameEffects(dt) {
-  const drifting = kart.state === 'drift';
-  const speed = Math.hypot(kart.vx, kart.vz);
-  model.rearContacts(contacts);
-  const grounded = kart.hopT <= 0;
+function kartEffects(stage, it, kv, dt) {
+  const k = it.k;
+  const f = kv.fx;
+  const drifting = k.state === 'drift';
+  const speed = Math.hypot(k.vx, k.vz);
+  kv.model.rearContacts(f.contacts);
+  const grounded = k.hopT <= 0;
 
-  // skid marks + sparks while drifting
   if (drifting && grounded) {
-    if (hadContacts) {
-      skids.add(lastContacts[0], contacts[0]);
-      skids.add(lastContacts[1], contacts[1]);
+    if (f.had) {
+      stage.skids.add(f.last[0], f.contacts[0]);
+      stage.skids.add(f.last[1], f.contacts[1]);
     }
-    const hot = inWindow(kart.charge) && kart.pumps < TUNING.maxPumps;
-    const late = kart.charge > TUNING.windowHi && kart.pumps < TUNING.maxPumps;
-    sparkAcc += dt * (hot ? 70 : 34);
-    while (sparkAcc >= 1) {
-      sparkAcc -= 1;
-      const p = contacts[(Math.random() * 2) | 0];
+    const hot = inWindow(k.charge) && k.pumps < TUNING.maxPumps;
+    const late = k.charge > TUNING.windowHi && k.pumps < TUNING.maxPumps;
+    f.spark += dt * (hot ? 70 : 34);
+    while (f.spark >= 1) {
+      f.spark -= 1;
+      const p = f.contacts[(rnd() * 2) | 0];
       if (late) {
-        puffs.emit({ x: p.x, y: 0.35, z: p.z, vx: (rnd() - 0.5) * 2, vy: 1 + rnd(), vz: (rnd() - 0.5) * 2, life: 0.5, size: 0.6, size1: 1.6, color: '#5a5350', alpha: 0.6, drag: 2 });
+        stage.puffs.emit({ x: p.x, y: 0.35, z: p.z, vx: (rnd() - 0.5) * 2, vy: 1 + rnd(), vz: (rnd() - 0.5) * 2, life: 0.5, size: 0.6, size1: 1.6, color: '#5a5350', alpha: 0.6, drag: 2 });
       } else {
-        const color = hot ? BOOST_COLORS[Math.min(kart.pumps + 1, 3)] : '#fff1c9';
-        sparks.emit({
+        stage.sparks.emit({
           x: p.x, y: 0.2, z: p.z,
-          vx: -kart.vx * 0.15 + (rnd() - 0.5) * 5, vy: 2 + rnd() * 3, vz: -kart.vz * 0.15 + (rnd() - 0.5) * 5,
-          life: 0.25 + rnd() * 0.2, size: hot ? 0.55 : 0.32, size1: 0.05, color, gravity: 14, drag: 1.5,
+          vx: -k.vx * 0.15 + (rnd() - 0.5) * 5, vy: 2 + rnd() * 3, vz: -k.vz * 0.15 + (rnd() - 0.5) * 5,
+          life: 0.25 + rnd() * 0.2, size: hot ? 0.55 : 0.32, size1: 0.05, color: hot ? BOOST_COLORS[Math.min(k.pumps + 1, 3)] : '#fff1c9', gravity: 14, drag: 1.5,
         });
       }
     }
-    // a soft tyre-smoke haze
-    if (Math.random() < dt * 14) {
-      const p = contacts[(Math.random() * 2) | 0];
-      puffs.emit({ x: p.x, y: 0.3, z: p.z, vy: 0.8, life: 0.7, size: 0.8, size1: 2.4, color: '#f2e6d0', alpha: 0.45, drag: 2 });
+    if (rnd() < dt * 14) {
+      const p = f.contacts[(rnd() * 2) | 0];
+      stage.puffs.emit({ x: p.x, y: 0.3, z: p.z, vy: 0.8, life: 0.7, size: 0.8, size1: 2.4, color: '#f2e6d0', alpha: 0.45, drag: 2 });
     }
   }
-  hadContacts = drifting && grounded;
-  lastContacts[0].copy(contacts[0]);
-  lastContacts[1].copy(contacts[1]);
+  f.had = drifting && grounded;
+  f.last[0].copy(f.contacts[0]);
+  f.last[1].copy(f.contacts[1]);
 
-  // entering the boost window: a "ting" and a flash so you can feel the timing
-  if (drifting && kart.held && kart.pumps < TUNING.maxPumps && prevCharge < TUNING.windowLo && kart.charge >= TUNING.windowLo) {
-    sound.window();
-  }
-  prevCharge = drifting ? kart.charge : 0;
-
-  // sand kicked up at speed
   if (grounded && speed > 12 && !drifting) {
-    dustAcc += dt * speed * 0.35;
-    while (dustAcc >= 1) {
-      dustAcc -= 1;
-      const p = contacts[(Math.random() * 2) | 0];
-      puffs.emit({ x: p.x, y: 0.25, z: p.z, vx: (rnd() - 0.5), vy: 0.6, vz: (rnd() - 0.5), life: 0.45, size: 0.5, size1: 1.3, color: '#e9d2a6', alpha: 0.35, drag: 2 });
+    f.dust += dt * speed * 0.35;
+    while (f.dust >= 1) {
+      f.dust -= 1;
+      const p = f.contacts[(rnd() * 2) | 0];
+      stage.puffs.emit({ x: p.x, y: 0.25, z: p.z, vx: rnd() - 0.5, vy: 0.6, vz: rnd() - 0.5, life: 0.45, size: 0.5, size1: 1.3, color: '#e9d2a6', alpha: 0.35, drag: 2 });
     }
   }
 
-  // boost fire
-  if (kart.boostT > 0) {
-    model.exhausts(exhausts);
-    flameAcc += dt * 60;
-    const col = BOOST_COLORS[kart.boostLevel];
-    while (flameAcc >= 1) {
-      flameAcc -= 1;
-      const p = exhausts[(Math.random() * 2) | 0];
-      sparks.emit({
+  if (k.boostT > 0) {
+    kv.model.exhausts(exhausts);
+    f.flame += dt * 60;
+    const col = BOOST_COLORS[k.boostLevel];
+    while (f.flame >= 1) {
+      f.flame -= 1;
+      const p = exhausts[(rnd() * 2) | 0];
+      stage.sparks.emit({
         x: p.x, y: p.y, z: p.z,
-        vx: -Math.sin(kart.yaw) * 6 + (rnd() - 0.5) * 1.5, vy: 0.5 + rnd(), vz: -Math.cos(kart.yaw) * 6 + (rnd() - 0.5) * 1.5,
+        vx: -Math.sin(k.yaw) * 6 + (rnd() - 0.5) * 1.5, vy: 0.5 + rnd(), vz: -Math.cos(k.yaw) * 6 + (rnd() - 0.5) * 1.5,
         life: 0.22, size: 0.7, size1: 0.1, color: col, drag: 4, floor: false,
       });
     }
   }
 
-  // juiced: a golden glitter trail
-  if (kart.fruit >= TUNING.fruitMax) {
-    glitterAcc += dt * 18;
-    while (glitterAcc >= 1) {
-      glitterAcc -= 1;
-      sparks.emit({ x: pose.x + (rnd() - 0.5) * 2, y: 0.5 + rnd() * 1.5, z: pose.z + (rnd() - 0.5) * 2, vy: 1.2, life: 0.6, size: 0.28, size1: 0.02, color: '#ffd84a', drag: 1, floor: false });
+  if (k.fruit >= TUNING.fruitMax) {
+    f.glitter += dt * 18;
+    while (f.glitter >= 1) {
+      f.glitter -= 1;
+      stage.sparks.emit({ x: it.pose.x + (rnd() - 0.5) * 2, y: 0.5 + rnd() * 1.5, z: it.pose.z + (rnd() - 0.5) * 2, vy: 1.2, life: 0.6, size: 0.28, size1: 0.02, color: '#ffd84a', drag: 1, floor: false });
     }
   }
 }
 
-// ---------------------------------------------------------------- modes
-
-function startPlay() {
-  sound.start();
-  sound.click();
-  try {
-    const el = document.documentElement;
-    const fs = el.requestFullscreen?.({ navigationUI: 'hide' }) || el.webkitRequestFullscreen?.();
-    Promise.resolve(fs)
-      .then(() => screen.orientation?.lock?.('landscape'))
-      .catch(() => {});
-  } catch {}
-  try {
-    navigator.wakeLock?.request('screen').catch(() => {});
-  } catch {}
-
-  newWorld();
-  resetVisuals();
-  mode = 'play';
-  controls.enabled = true;
-  controls.reset();
-  document.body.classList.add('playing');
-  snapCamera();
+// keep crates and mangoes in step with the session (the server decides online)
+function syncPickups(stage, v) {
+  const p = v.pickups();
+  const cr = stage.arena3d.crates.items;
+  p.crates.forEach((alive, i) => {
+    if (!cr[i]) return;
+    if (alive && !cr[i].alive) stage.arena3d.crates.respawn(i);
+    else if (!alive && cr[i].alive) stage.arena3d.crates.smash(i);
+  });
+  const fr = stage.arena3d.mangoes.items;
+  p.fruit.forEach((alive, i) => {
+    if (!fr[i]) return;
+    if (alive && !fr[i].alive) stage.arena3d.mangoes.respawn(i);
+    else if (!alive && fr[i].alive) stage.arena3d.mangoes.take(i);
+  });
 }
 
-function toTitle() {
-  mode = 'attract';
-  controls.enabled = false;
-  controls.reset();
-  document.body.classList.remove('playing');
-  newWorld(true);
-  resetVisuals();
-  snapCamera();
-}
+// ---------------------------------------------------------------- sound toggle
 
-function resetVisuals() {
-  world.crates.forEach((_, i) => arena3d.crates.respawn(i));
-  world.fruit.forEach((_, i) => arena3d.mangoes.respawn(i));
-  hadContacts = false;
-  prevCharge = 0;
-}
-
-$('play').addEventListener('click', startPlay);
-$('home').addEventListener('click', () => {
-  sound.click();
-  toTitle();
-});
-let muted = false;
-try {
-  muted = localStorage.getItem('karting.muted') === '1';
-} catch {}
+let muted = store.get('muted', false);
 const muteBtn = $('mute');
 function applyMute() {
   sound.setMuted(muted);
@@ -477,9 +945,11 @@ muteBtn.addEventListener('click', () => {
   muted = !muted;
   sound.start();
   applyMute();
-  try {
-    localStorage.setItem('karting.muted', muted ? '1' : '0');
-  } catch {}
+  store.set('muted', muted);
+});
+$('home').addEventListener('click', () => {
+  sound.click();
+  toTitle();
 });
 
 // ---------------------------------------------------------------- sizing + quality
@@ -497,7 +967,6 @@ window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 resize();
 
-// drop resolution, then shadows, if the phone cannot keep up
 const perf = { t: 0, frames: 0, level: 0, wait: 2.5 };
 function adaptQuality(dt) {
   perf.wait -= dt;
@@ -515,7 +984,7 @@ function adaptQuality(dt) {
     if (perf.level === 2) pixelRatio = 1;
     if (perf.level === 3) {
       renderer.shadowMap.enabled = false;
-      scene.traverse((o) => o.material && (o.material.needsUpdate = true));
+      for (const st of stages.values()) st.scene.traverse((o) => o.material && (o.material.needsUpdate = true));
     }
     renderer.setPixelRatio(pixelRatio);
     resize();
@@ -524,12 +993,10 @@ function adaptQuality(dt) {
 
 // ---------------------------------------------------------------- main loop
 
-// type `karting.autopilot = true` in the console to let the bot drive
-const debug = { autopilot: false };
-
 let acc = 0;
 let last = performance.now();
 let time = 0;
+const NEUTRAL = { steer: 0, drift: false };
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -538,41 +1005,104 @@ function frame(now) {
   time += dt;
   acc += dt;
 
+  const v = view();
+  const stage = getStage(v.arena);
+  if (v !== shown) {
+    clearKarts(stage);
+    snapCamera = true;
+    shown = v;
+    resultsShownFor = null;
+  }
+  if (mode === 'online' && net) {
+    // online and in the lobby: the demo plays behind the lobby card
+    const inRace = v === net;
+    if (inRace && !$('lobby').hidden) {
+      $('lobby').hidden = true;
+      setPlaying(true);
+    } else if (!inRace && $('lobby').hidden && net.status !== 'closed') {
+      showLobby();
+    }
+  }
+
+  // fixed-rate simulation
   let steps = 0;
+  const collected = [];
   while (acc >= TICK && steps < 8) {
-    prev.x = kart.x;
-    prev.z = kart.z;
-    prev.yaw = kart.yaw;
-    const input = mode === 'play' && !debug.autopilot ? controls.read(TICK) : botInput(bot, kart, TICK);
-    onEvents(stepWorld(world, { me: input }));
+    const playing = controls.enabled && v.localId;
+    const input = !playing ? NEUTRAL : debug.autopilot ? autopilotInput(v) : controls.read(TICK);
+    collected.push(...v.tick(input));
+    if (net && v !== net) net.tick(NEUTRAL); // drains anything that arrived while in the lobby
     acc -= TICK;
     steps++;
   }
   if (steps === 8) acc = 0;
 
-  const a = acc / TICK;
-  pose.x = lerp(prev.x, kart.x, a);
-  pose.z = lerp(prev.z, kart.z, a);
-  pose.yaw = lerpAngle(prev.yaw, kart.yaw, a);
+  const alpha = acc / TICK;
+  const list = v.karts(alpha);
+  const byId = new Map(list.map((it) => [it.id, it]));
 
-  model.update(pose, kart, dt);
-  arena3d.update(dt, time);
-  frameEffects(dt);
-  sparks.update(dt);
-  puffs.update(dt);
-  debris.update(dt);
-  rings.update(dt);
-  lights.follow(pose.x, pose.z);
-  updateCamera(dt, time);
+  // kart models: create for newcomers, drop the departed
+  list.forEach((it, i) => {
+    const kv = kartVisual(stage, it.id, v, i);
+    it.model = kv.model;
+    kv.model.update(it.pose, it.k, dt);
+    // name tags only once a kart is a little way off, so they never fill the screen
+    if (kv.tag) {
+      const d = Math.hypot(it.pose.x - camera.position.x, it.pose.z - camera.position.z);
+      kv.tag.visible = d > 10;
+      kv.tag.material.opacity = Math.min(1, (d - 10) / 6);
+    }
+  });
+  for (const [id, kv] of stage.karts) {
+    if (!byId.has(id)) {
+      stage.scene.remove(kv.model.root);
+      stage.karts.delete(id);
+    }
+  }
+
+  onEvents(v, stage, collected, byId);
+  syncPickups(stage, v);
+  for (const it of list) {
+    const kv = stage.karts.get(it.id);
+    if (kv) kartEffects(stage, it, kv, dt); // a new race may have just cleared the models
+  }
+  stage.arena3d.update(dt, time);
+  stage.sparks.update(dt);
+  stage.puffs.update(dt);
+  stage.debris.update(dt);
+  stage.rings.update(dt);
+
+  const local = v.localId ? byId.get(v.localId) : null;
+  let target = local;
+  if (!target) {
+    const info = v.raceInfo && v.raceInfo();
+    const leader = info && Object.entries(info.entrants).find(([, e]) => e.place === 1);
+    target = (leader && byId.get(leader[0])) || list[0];
+  }
+  const follow = mode !== 'title' && !(mode === 'online' && v === attract);
+  updateCamera(dt, time, target, follow);
+  if (target) stage.lights.follow(target.pose.x, target.pose.z);
 
   const scale = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-  sparks.setScale(scale);
-  puffs.setScale(scale);
+  stage.sparks.setScale(scale);
+  stage.puffs.setScale(scale);
 
-  sound.update(dt, kart, kart.state === 'drift');
-  if (mode === 'play') updateHud();
+  if (local && mode !== 'title') sound.update(dt, local.k, local.k.state === 'drift');
+  else if (sound.ctx) sound.update(dt, { vx: 0, vz: 0, boostT: 0, hopT: 0, charge: 0 }, false);
+  if (document.body.classList.contains('playing')) updateHud(v, list, local);
   adaptQuality(dt);
-  renderer.render(scene, camera);
+  renderer.render(stage.scene, camera);
+}
+
+// autopilot: lets the bot drive your kart (debugging and demos)
+let autoBot = null;
+function autopilotInput(v) {
+  const me = v.karts(1).find((it) => it.id === v.localId);
+  if (!me) return NEUTRAL;
+  if (!autoBot || autoBot.arena !== v.arena) {
+    autoBot = { arena: v.arena, bot: v.arena.track ? createPathBot(v.arena.track, { obstacles: v.arena.obstacles }) : createBot() };
+  }
+  return v.arena.track ? pathBotInput(autoBot.bot, me.k, TICK) : botInput(autoBot.bot, me.k, TICK);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -585,12 +1115,14 @@ requestAnimationFrame(frame);
 
 // handy for debugging from the console
 window.karting = {
-  get world() { return world; },
-  get kart() { return kart; },
+  get session() { return view(); },
+  get kart() { const v = view(); return v.localId ? v.karts(1).find((it) => it.id === v.localId)?.k : null; },
+  get mode() { return mode; },
+  get net() { return net; },
   get autopilot() { return debug.autopilot; },
-  set autopilot(v) { debug.autopilot = !!v; if (v) { bot = createBot(); } },
+  set autopilot(on) { debug.autopilot = !!on; autoBot = null; },
   // `karting.colliders = true` outlines every collision shape, to line models up with them
-  get colliders() { return colliders.visible; },
-  set colliders(v) { colliders.visible = !!v; },
+  get colliders() { return debug.colliders; },
+  set colliders(on) { debug.colliders = !!on; for (const st of stages.values()) st.colliders.visible = debug.colliders; },
   renderer,
 };

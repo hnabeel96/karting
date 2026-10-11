@@ -1,18 +1,28 @@
 # Karting
 
-A phone-first kart brawler to play with friends: Smash Karts-style arenas and chunky low-poly look, Crash Team Racing-style hop-drifts and boosts. Runs in the phone's browser, nothing to install.
+A phone-first kart racer to play with friends: Smash Karts-style chunky low-poly look, Crash Team Racing-style hop-drifts and pump-boosts. Runs in the phone's browser, nothing to install.
 
-**Status: step 1 of 5.** One kart, one arena, solo. The point of this step is to find out whether drifting feels good on a phone before anything else gets built.
+## Race your brother (same wifi)
 
-## Play it
+On a laptop on the same wifi as both phones:
 
 ```bash
 npm start
 ```
 
-Then open the address it prints on your phone (same wifi), e.g. `http://192.168.1.20:3000`. Turn the phone sideways and tap **Play**.
+It prints an address like `http://192.168.1.20:3000`. Open it on both phones, turn them sideways, and tap **Race a friend**. You both land in the lobby: pick a name and colour, add bots if you want a fuller grid, and either of you taps **Start race**. Three laps of the Temple Circuit; the results screen has **Race again**.
 
-No `npm install` needed: three.js is vendored in `client/vendor/`, and the dev server uses only Node built-ins. Node 20+.
+No `npm install` needed: three.js is vendored in `client/vendor/` and the server uses only Node built-ins (Node 20+).
+
+To race from different places, put the same server on a droplet: see [deploy/README.md](deploy/README.md).
+
+## Modes
+
+| Title screen | What it is | Needs the server? |
+|---|---|---|
+| **Race a friend** | online race, up to 8 karts (friends + bots) | yes |
+| **Race bots** | 3-lap race against 3 bots, all on your phone | no |
+| Free drive in the courtyard | the original Temple Courtyard arena, no race | no |
 
 ## Controls
 
@@ -24,54 +34,69 @@ No `npm install` needed: three.js is vendored in `client/vendor/`, and the dev s
 
 The kart always accelerates; there is no gas pedal.
 
-**The pump-boost.** While you drift, a charge fills the ring around the drift button. Its last stretch is the window: the button turns the colour of the next boost, the sparks match, and you hear a *ting*. Let go and press again inside the window to fire a boost and keep drifting. Too early or too late gives a puff of black smoke and resets the charge. Letting go inside the window and not pressing again ends the drift with a boost.
+**Pump-boost.** While you drift, a charge fills the ring around the drift button. Its last stretch is the window: the button turns the colour of the next boost, the sparks match, and you hear a *ting*. Let go and press again inside the window to fire a boost and keep drifting. Too early or too late gives black smoke. Letting go inside the window without pressing again ends the drift with a boost.
 
-**Pickups.** Crates smash (weapons come later). Collect 10 mangoes to get **Juiced**, which will power up weapons later.
+**Mangoes** raise your top speed a little each (10 = Juiced). A hard crash knocks one loose. **Crates** slow you slightly when smashed; they will hold weapons later. Stuck against a wall for 3 seconds? You are put back on the road.
+
+## The Temple Circuit
+
+A 590 m loop round the old temple: long start straight, fast sweeper, chicane, a tight hairpin at the top, and a twisty run home. The track is just 18 control points in `shared/arenas/circuit.js`; `shared/track.js` turns them into a smooth road with walls, kerbs, timing gates and an 8-kart grid. Move a point and the whole track (walls, gates, minimap, bot racing line) follows. `npm test` checks the road never pinches or overlaps itself.
+
+## How multiplayer works
+
+```
+phone ──inputs (60/s)──▶  server: the referee  ──snapshots (30/s)──▶ every phone
+                          runs shared/race.js + sim.js
+```
+
+- The **server** runs the exact same rules as the phones (`shared/`), consumes each phone's `{ steer, drift }` inputs at 60 ticks a second, drives the bots, and sends everyone the state 30 times a second.
+- **Your own kart** is predicted on your phone the moment you touch the screen, then quietly corrected when the server's answer arrives (unconfirmed inputs are replayed on top). Measured against the real server with 80 ms of round-trip lag, corrections were under 15 cm.
+- **Everyone else** is drawn about 110 ms in the past, sliding smoothly between snapshots.
 
 ## How the code is laid out
 
 ```
-shared/   the rulebook: runs the same on phones and, later, on the server
-  sim.js          kart physics, hop/drift/boost state machine, collisions, pickups
-  bot.js          a driver that produces inputs (title-screen demo, later fills empty seats)
-  arenas/         arenas as plain data: obstacles, crates, mango lines, spawns
+shared/   the rules: identical on phones and the server
+  sim.js          kart physics, hop/drift/boost, walls, bumps, pickups
+  race.js         grid, countdown, gates, laps, positions, rescue, results
+  track.js        control points -> road, walls, gates, grid
+  bot.js          bots: courtyard circler and track racer
+  net.js          snapshot packing
+  arenas/         circuit.js (race), temple.js (courtyard)
 client/   what the phone runs
-  index.html      HUD, touch controls, title screen
-  src/main.js     fixed-step loop (60 ticks/s), camera, events -> effects
-  src/arena3d.js  draws an arena from its data file
+  index.html      HUD, touch controls, title, lobby and results screens
+  src/main.js     frame loop, camera, events -> effects, HUD
+  src/session-local.js  games simulated on the phone
+  src/session-net.js    online races: prediction and interpolation
+  src/arena3d.js  draws an arena: track, walls, kerbs, scenery
   src/kartModel.js  the kart and its driver, Pip
-  src/fx.js       particles, skid marks, splinters, shockwave rings
-  src/input.js    touch + keyboard
-  src/audio.js    every sound, synthesised with WebAudio
+  src/fx.js, input.js, audio.js, models.js
 client/models/   optional .glb files that replace the built-in art (see its README)
 server/
-  dev.js          static file server for local wifi play (grows into the referee)
-tests/            node --test suite for the sim
+  index.js        serves the game, /ws for races, /health
+  room.js         the race room: lobby, bots, inputs, snapshots
+  ws.js           a small dependency-free WebSocket server
+deploy/           systemd unit, Caddy and nginx setup for a droplet
+tests/            node --test: sim, race, track geometry, server end to end
 ```
-
-Rules that keep multiplayer easy later:
-
-- `shared/` never touches the DOM, three.js or `Math.random`. Same inputs, same result.
-- The client only sends `{ steer, drift }` into `stepWorld()` at a fixed tick and draws what comes out. A server can run the exact same function.
-- Anything cosmetic (squash, sparks, camera shake, sounds) lives in `client/` and reacts to sim events.
 
 ## Tuning
 
-All the feel numbers are in `TUNING` at the top of `shared/sim.js`: speeds, turn rates, drift grip, the boost window, boost strength. Change a number, refresh the phone. Run `npm test` after.
+Feel numbers live in `TUNING` at the top of `shared/sim.js`; race rules in `RACE` in `shared/race.js`. Change, refresh, `npm test`.
 
-Debug helpers in the browser console: `karting.autopilot = true` lets the bot drive; `karting.colliders = true` outlines every collision shape.
+Debug helpers in the browser console: `karting.autopilot = true` lets the bot drive your kart; `karting.colliders = true` outlines every collision shape.
 
 ## Swapping in 3D models
 
-The kart, crates, mangoes and every arena prop can be replaced with `.glb` model files (from Blender, Kenney, Quaternius...) by listing them in `client/models/manifest.js`. Anything not listed keeps its built-in look. Add `#examples` to the game's address to see a swap. Full rules, including the part names a kart model needs, are in [client/models/README.md](client/models/README.md).
+The kart, crates, mangoes and every prop can be replaced with `.glb` files by listing them in `client/models/manifest.js`. Add `#examples` to the address to see a swap. Rules, including the part names a kart model needs, are in [client/models/README.md](client/models/README.md).
 
 ## Roadmap
 
-1. **Solo drift feel** (this step)
-2. Crates hand out weapons: rocket, mine, homing missile, shockwave, shield. Juiced weapons.
-3. Multiplayer over wifi: WebSocket referee in `server/`, client prediction for your own kart
-4. Deploy to the Bangalore droplet with rooms, room codes and HTTPS
-5. More arenas, bounce pads, explosive crates, polish
+1. ~~Solo drift feel~~
+2. ~~Race circuit and multiplayer~~
+3. Crates hand out weapons: rocket, mine, homing missile, shockwave, shield; Juiced weapons
+4. Battle mode in the courtyard, room codes for several groups at once
+5. More tracks, bounce pads, explosive crates
 
 ## Credits
 
