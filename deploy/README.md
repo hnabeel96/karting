@@ -1,5 +1,27 @@
 # Racing online: putting the server on the droplet
 
+## Automatic (recommended)
+
+Every push to `main` runs the tests, then `.github/workflows/deploy.yml` copies the game to the droplet over SSH and runs `deploy/setup.sh` there. The script installs Node if needed, runs the game as the `karting` systemd service, and puts it behind HTTPS using whatever web server is already on the droplet (Caddy or nginx), installing Caddy if port 80 is free. Existing sites are left alone; every web server change is validated and rolled back if it fails.
+
+One-time setup:
+
+1. **DNS:** an `A` record for your subdomain (e.g. `kart.pineapp.win`) pointing at the droplet.
+2. **Domain:** put it in `deploy/config.env` (`DOMAIN=kart.pineapp.win`). Leave it empty to serve on `http://<droplet-ip>:3000` instead.
+3. **Secrets:** in the repo, Settings → Secrets and variables → Actions, add `DEPLOY_HOST` (droplet IP), `DEPLOY_USER` (e.g. `root`) and `DEPLOY_KEY` (a private SSH key that can log in). To make a key just for this, on the droplet:
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/karting_deploy -N ""
+   cat ~/.ssh/karting_deploy.pub >> ~/.ssh/authorized_keys
+   cat ~/.ssh/karting_deploy   # paste this whole thing into DEPLOY_KEY
+   ```
+4. Push anything to `main`, or run the workflow by hand from the Actions tab.
+
+If the user is not root, it needs passwordless `sudo`.
+
+## By hand
+
+The rest of this page does the same steps manually.
+
 On the same wifi you only need `npm start` on a laptop. To race from different places, run the same server on the Bangalore droplet. These steps assume Ubuntu and a subdomain such as `kart.pineapp.win`.
 
 ## 1. DNS

@@ -1,0 +1,81 @@
+# Tests every push; on main, ships the game to the droplet and (re)installs it.
+# Needs three repository secrets: DEPLOY_HOST (droplet IP), DEPLOY_USER (e.g. root),
+# DEPLOY_KEY (a private SSH key that can log in). The domain lives in deploy/config.env.
+
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      HOST: ${{ secrets.DEPLOY_HOST }}
+      USER_NAME: ${{ secrets.DEPLOY_USER }}
+      KEY: ${{ secrets.DEPLOY_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the deploy secrets
+        id: check
+        run: |
+          if [ -z "$HOST" ] || [ -z "$USER_NAME" ] || [ -z "$KEY" ]; then
+            echo "::warning::Not deploying: add DEPLOY_HOST, DEPLOY_USER and DEPLOY_KEY in Settings > Secrets and variables > Actions."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up SSH
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host droplet\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n  ServerAliveInterval 20\n' "$HOST" "$USER_NAME" > ~/.ssh/config
+
+      - name: Copy the game to the droplet
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          tar czf - --exclude=.git --exclude=node_modules . | ssh droplet 'rm -rf ~/karting-release && mkdir -p ~/karting-release && tar xzf - -C ~/karting-release'
+
+      - name: Install and start
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          set -a; . deploy/config.env; set +a
+          ssh droplet "bash ~/karting-release/deploy/setup.sh '${DOMAIN}'"
+
+      - name: Check it is up
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          set -a; . deploy/config.env; set +a
+          ssh droplet 'curl -fsS http://127.0.0.1:3000/health'
+          if [ -n "$DOMAIN" ]; then
+            for i in 1 2 3 4 5 6; do
+              if curl -fsS "https://$DOMAIN/health"; then echo; echo "Live at https://$DOMAIN"; exit 0; fi
+              sleep 10
+            done
+            echo "::warning::The server runs, but https://$DOMAIN is not answering yet. Check the DNS record."
+          else
+            echo "Live at http://<droplet-ip>:3000"
+          fi
