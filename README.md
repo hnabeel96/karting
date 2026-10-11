@@ -43,6 +43,7 @@ client/   what the phone runs
   src/fx.js       particles, skid marks, splinters, shockwave rings
   src/input.js    touch + keyboard
   src/audio.js    every sound, synthesised with WebAudio
+client/models/   optional .glb files that replace the built-in art (see its README)
 server/
   dev.js          static file server for local wifi play (grows into the referee)
 tests/            node --test suite for the sim
@@ -58,7 +59,11 @@ Rules that keep multiplayer easy later:
 
 All the feel numbers are in `TUNING` at the top of `shared/sim.js`: speeds, turn rates, drift grip, the boost window, boost strength. Change a number, refresh the phone. Run `npm test` after.
 
-Debug helper: in the browser console, `karting.autopilot = true` lets the bot drive.
+Debug helpers in the browser console: `karting.autopilot = true` lets the bot drive; `karting.colliders = true` outlines every collision shape.
+
+## Swapping in 3D models
+
+The kart, crates, mangoes and every arena prop can be replaced with `.glb` model files (from Blender, Kenney, Quaternius...) by listing them in `client/models/manifest.js`. Anything not listed keeps its built-in look. Add `#examples` to the game's address to see a swap. Full rules, including the part names a kart model needs, are in [client/models/README.md](client/models/README.md).
 
 ## Roadmap
 
@@ -70,4 +75,4 @@ Debug helper: in the browser console, `karting.autopilot = true` lets the bot dr
 
 ## Credits
 
-three.js r170 (MIT), vendored in `client/vendor/`. Everything else, including models, textures and sounds, is generated in code.
+three.js r170 and its GLTFLoader (MIT), vendored in `client/vendor/`. Everything else, including models, textures and sounds, is generated in code.

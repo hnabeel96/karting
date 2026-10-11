@@ -13,12 +13,14 @@ await rm(OUT, { recursive: true, force: true });
 await mkdir(OUT, { recursive: true });
 await cp(path.join(ROOT, 'client/src'), path.join(OUT, 'src'), { recursive: true });
 await cp(path.join(ROOT, 'shared'), path.join(OUT, 'shared'), { recursive: true });
+await cp(path.join(ROOT, 'client/models'), path.join(OUT, 'models'), { recursive: true });
 
 let html = await readFile(path.join(ROOT, 'client/index.html'), 'utf8');
 html = html
   .replace('"@shared/": "../shared/"', '"@shared/": "./shared/"')
   // hosted copies load three.js from a CDN; local wifi play uses the vendored copy
-  .replace('"./vendor/three.module.min.js"', '"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js"');
+  .replace('"./vendor/three.module.min.js"', '"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js"')
+  .replace('"./vendor/addons/"', '"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"');
 
 // The host wraps the page in its own document, so emit only the inner parts:
 // head content (minus charset/viewport) followed by body content.

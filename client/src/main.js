@@ -12,6 +12,7 @@ import { Particles, SkidMarks, Debris, Rings } from './fx.js';
 import { Controls } from './input.js';
 import { Sound } from './audio.js';
 import { damp, dampAngle, lerp, lerpAngle } from './util.js';
+import { loadModels, colliderOverlay } from './models.js';
 
 const $ = (id) => document.getElementById(id);
 const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -25,6 +26,13 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 $('stage').appendChild(renderer.domElement);
 
+// Model files that replace the built-in art (models/manifest.js).
+// Add #examples to the address to try the example models instead.
+const manifestUrl = new URL(location.hash === '#examples' ? '../models/examples/manifest.js' : '../models/manifest.js', import.meta.url);
+const manifest = (await import(manifestUrl.href)).default;
+const models = await loadModels(manifest, manifestUrl);
+window.addEventListener('hashchange', () => location.reload());
+
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, 1, 0.3, 600);
 
@@ -36,7 +44,7 @@ const lights = buildLights(scene);
 let world;
 let kart;
 let arena3d;
-const model = new KartModel(scene, { colorIndex: 0, number: 1 });
+const model = new KartModel(scene, { colorIndex: 0, number: 1, model: models.kart });
 const sparks = new Particles(scene, 500, { additive: true, soft: 0.2 });
 const puffs = new Particles(scene, 420, { additive: false, soft: 0.55 });
 const skids = new SkidMarks(scene);
@@ -67,7 +75,8 @@ function newWorld(attract = false) {
   Object.assign(prev, { x: kart.x, z: kart.z, yaw: kart.yaw });
 }
 newWorld(true);
-arena3d = buildArena(scene, temple, world);
+arena3d = buildArena(scene, temple, world, models);
+const colliders = colliderOverlay(scene, temple, world, TUNING);
 
 // ---------------------------------------------------------------- camera
 
@@ -580,5 +589,8 @@ window.karting = {
   get kart() { return kart; },
   get autopilot() { return debug.autopilot; },
   set autopilot(v) { debug.autopilot = !!v; if (v) { bot = createBot(); } },
+  // `karting.colliders = true` outlines every collision shape, to line models up with them
+  get colliders() { return colliders.visible; },
+  set colliders(v) { colliders.visible = !!v; },
   renderer,
 };

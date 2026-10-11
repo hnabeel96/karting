@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { StaticBatch, canvasTexture, seeded, toon, Spring } from './util.js';
+import { ModelInstances, modelBox, placement } from './models.js';
 
 export const PALETTE = {
   sky: '#7cc8f2',
@@ -423,67 +424,102 @@ function addJungle(b, half, rnd) {
 
 // ---------------------------------------------------------------- live objects
 
+/**
+ * Wrap a loaded model so it sits at a known size and pivot, whatever units it was made in.
+ * pivot 'bottom': origin at the centre of its base. 'center': origin at its middle.
+ */
+function normalized(model, { size, pivot, opts }) {
+  const box = modelBox(model);
+  const dims = box.getSize(new THREE.Vector3());
+  const centre = box.getCenter(new THREE.Vector3());
+  const k = (size / Math.max(dims.x, dims.y, dims.z, 1e-6)) * (opts.scale ?? 1);
+  const inner = new THREE.Group();
+  inner.add(model);
+  model.position.set(-centre.x, pivot === 'bottom' ? -box.min.y : -centre.y, -centre.z);
+  const outer = new THREE.Group();
+  outer.add(inner);
+  inner.scale.setScalar(k);
+  inner.rotation.y = THREE.MathUtils.degToRad(opts.rotateY ?? 0);
+  inner.position.y = opts.y ?? 0;
+  return outer;
+}
+
+function builtInCrate() {
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 1.6), new THREE.MeshLambertMaterial({ map: crateTexture() }));
+  m.position.y = 0.8;
+  g.add(m);
+  return g;
+}
+
+function builtInMango() {
+  const body = new THREE.SphereGeometry(0.5, 10, 8);
+  // yellow at the top, red-orange at the bottom
+  const pos = body.attributes.position;
+  const cols = new Float32Array(pos.count * 3);
+  const top = new THREE.Color('#ffd23a');
+  const bot = new THREE.Color(PALETTE.mangoRed);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    c.copy(bot).lerp(top, pos.getY(i) + 0.5);
+    cols.set([c.r, c.g, c.b], i * 3);
+  }
+  body.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  body.scale(0.85, 1, 0.75);
+  const leaf = new THREE.ConeGeometry(0.16, 0.5, 4);
+  leaf.rotateZ(-0.9);
+  leaf.translate(0.18, 0.55, 0);
+  const g = new THREE.Group();
+  g.add(
+    new THREE.Mesh(body, new THREE.MeshLambertMaterial({ vertexColors: true, emissive: '#ff8a1f', emissiveIntensity: 0.25, flatShading: true })),
+    new THREE.Mesh(leaf, toon('#3faa3a')),
+  );
+  return g;
+}
+
 export class Crates {
-  constructor(scene, list) {
-    this.geo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
-    this.mat = new THREE.MeshLambertMaterial({ map: crateTexture() });
-    this.items = list.map((c, i) => {
-      const m = new THREE.Mesh(this.geo, this.mat);
-      m.position.set(c.x, 0.8, c.z);
-      m.rotation.y = (i * 0.37) % 0.5 - 0.25;
-      m.castShadow = true;
-      m.receiveShadow = true;
-      scene.add(m);
-      return { mesh: m, spring: new Spring(260, 12, 1), alive: true };
-    });
+  constructor(scene, list, model) {
+    const src = model ? normalized(model.scene, { size: 1.6, pivot: 'bottom', opts: model.opts }) : builtInCrate();
+    this.inst = new ModelInstances(scene, src, list.length);
+    this.items = list.map((c, i) => ({
+      x: c.x,
+      z: c.z,
+      yaw: ((i * 0.37) % 0.5) - 0.25,
+      spring: new Spring(260, 12, 1),
+      alive: true,
+    }));
+    this.m = new THREE.Matrix4();
+    this.q = new THREE.Quaternion();
+    this.v = new THREE.Vector3();
+    this.s = new THREE.Vector3();
+    this.up = new THREE.Vector3(0, 1, 0);
   }
   smash(i) {
-    const it = this.items[i];
-    it.alive = false;
-    it.mesh.visible = false;
+    this.items[i].alive = false;
   }
   respawn(i) {
     const it = this.items[i];
     it.alive = true;
-    it.mesh.visible = true;
     it.spring.x = 0;
     it.spring.v = 4;
   }
   update(dt, t) {
-    for (const it of this.items) {
-      if (!it.alive) continue;
-      const s = Math.max(0.01, it.spring.step(1, dt));
-      it.mesh.scale.set(s, s, s);
-      it.mesh.position.y = 0.8 * s + Math.sin(t * 2 + it.mesh.position.x) * 0.04;
-    }
+    this.items.forEach((it, i) => {
+      const k = it.alive ? Math.max(0, it.spring.step(1, dt)) : 0;
+      this.q.setFromAxisAngle(this.up, it.yaw);
+      this.v.set(it.x, Math.sin(t * 2 + it.x) * 0.04, it.z);
+      this.s.set(k, k, k);
+      this.m.compose(this.v, this.q, this.s);
+      this.inst.setMatrixAt(i, this.m);
+    });
+    this.inst.commit();
   }
 }
 
 export class Mangoes {
-  constructor(scene, list) {
-    const body = new THREE.SphereGeometry(0.5, 10, 8);
-    // yellow at the top, red-orange at the bottom
-    const pos = body.attributes.position;
-    const cols = new Float32Array(pos.count * 3);
-    const top = new THREE.Color('#ffd23a');
-    const bot = new THREE.Color(PALETTE.mangoRed);
-    const c = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) {
-      const t = (pos.getY(i) + 0.5);
-      c.copy(bot).lerp(top, t);
-      cols.set([c.r, c.g, c.b], i * 3);
-    }
-    body.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-    body.scale(0.85, 1, 0.75);
-    const leaf = new THREE.ConeGeometry(0.16, 0.5, 4);
-    leaf.rotateZ(-0.9);
-    leaf.translate(0.18, 0.55, 0);
-
-    const n = list.length;
-    this.body = new THREE.InstancedMesh(body, new THREE.MeshLambertMaterial({ vertexColors: true, emissive: '#ff8a1f', emissiveIntensity: 0.25, flatShading: true }), n);
-    this.leaf = new THREE.InstancedMesh(leaf, toon('#3faa3a'), n);
-    this.body.castShadow = true;
-    scene.add(this.body, this.leaf);
+  constructor(scene, list, model) {
+    const src = model ? normalized(model.scene, { size: 1, pivot: 'center', opts: model.opts }) : builtInMango();
+    this.inst = new ModelInstances(scene, src, list.length, { receiveShadow: false });
     this.items = list.map((f) => ({ x: f.x, z: f.z, alive: true, spring: new Spring(240, 11, 1) }));
     this.m = new THREE.Matrix4();
     this.q = new THREE.Quaternion();
@@ -502,24 +538,21 @@ export class Mangoes {
   }
   update(dt, t) {
     this.items.forEach((it, i) => {
-      let s = 0;
-      if (it.alive) s = Math.max(0, it.spring.step(1, dt));
+      const k = it.alive ? Math.max(0, it.spring.step(1, dt)) : 0;
       this.e.set(0.25, t * 2.2 + i, 0);
       this.q.setFromEuler(this.e);
       this.v.set(it.x, 1.1 + Math.sin(t * 3 + i * 0.7) * 0.18, it.z);
-      this.s.set(s, s, s);
+      this.s.set(k, k, k);
       this.m.compose(this.v, this.q, this.s);
-      this.body.setMatrixAt(i, this.m);
-      this.leaf.setMatrixAt(i, this.m);
+      this.inst.setMatrixAt(i, this.m);
     });
-    this.body.instanceMatrix.needsUpdate = true;
-    this.leaf.instanceMatrix.needsUpdate = true;
+    this.inst.commit();
   }
 }
 
 // ---------------------------------------------------------------- the whole arena
 
-export function buildArena(scene, arena, world) {
+export function buildArena(scene, arena, world, models = { props: {} }) {
   const rnd = seeded(42);
   const half = arena.half;
 
@@ -551,7 +584,12 @@ export function buildArena(scene, arena, world) {
   const far = new StaticBatch();
   addWalls(near, half, rnd);
   let idolY = 6;
+  const swapped = {}; // kind -> obstacles drawn with a model file instead
   for (const o of arena.obstacles) {
+    if (models.props[o.kind]) {
+      (swapped[o.kind] ||= []).push(o);
+      continue;
+    }
     if (o.kind === 'temple') idolY = addTemple(near, o);
     else if (o.kind === 'ruin') addRuin(near, o, rnd);
     else if (o.kind === 'pillar') addPillar(near, o, rnd);
@@ -559,6 +597,20 @@ export function buildArena(scene, arena, world) {
     else if (o.kind === 'rock') addRock(near, o, rnd);
   }
   addJungle(far, half, rnd);
+
+  // props replaced by model files: one instanced copy per obstacle
+  for (const [kind, list] of Object.entries(swapped)) {
+    const { scene: model, opts } = models.props[kind];
+    const box = modelBox(model);
+    const inst = new ModelInstances(scene, model, list.length);
+    list.forEach((o, i) => {
+      const m = placement(kind, o, opts, box, rnd);
+      inst.setMatrixAt(i, m);
+      // the idol floats just above whatever temple model is used
+      if (kind === 'temple') idolY = box.clone().applyMatrix4(m).max.y + 0.2;
+    });
+    inst.commit();
+  }
 
   const nearMesh = near.build();
   nearMesh.castShadow = true;
@@ -591,8 +643,8 @@ export function buildArena(scene, arena, world) {
   }
   scene.add(flames);
 
-  const crates = new Crates(scene, world.crates);
-  const mangoes = new Mangoes(scene, world.fruit);
+  const crates = new Crates(scene, world.crates, models.props.crate);
+  const mangoes = new Mangoes(scene, world.fruit, models.props.mango);
 
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();

@@ -199,6 +199,7 @@
     animation: breathe 1.6s ease-in-out infinite;
   }
   #play:active { transform: translateY(6px); box-shadow: 0 2px 0 var(--mango-deep); animation: none; }
+  body:not(.ready) #play { opacity: 0.5; pointer-events: none; animation: none; }
   @keyframes breathe { 50% { transform: scale(1.05); } }
   .keys { font: 700 13px/1.4 var(--body); color: rgba(255,244,220,0.8); text-align: center; }
   .keys kbd { font: 900 12px/1 var(--body); background: rgba(255,244,220,0.18); padding: 3px 6px; border-radius: 5px; }
@@ -221,7 +222,7 @@
   }
 </style>
 <script type="importmap">
-{ "imports": { "three": "./vendor/three.module.min.js", "@shared/": "../shared/" } }
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/", "@shared/": "../shared/" } }
 </script>
 </head>
 <body>
