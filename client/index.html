@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#3a9ae0">
+<meta name="theme-color" content="#1f5a35">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Karting</title>
@@ -415,7 +418,10 @@
     <button id="play">Race a friend</button>
     <button class="btn" id="race-bots">Race bots</button>
   </div>
-  <button class="linkish" id="free-drive">Free drive in the courtyard</button>
+  <div class="menu">
+    <button class="linkish" id="free-drive">Free drive in the courtyard</button>
+    <button class="linkish" id="install" hidden>Install on this phone</button>
+  </div>
   <div class="keys"><kbd>&larr;</kbd> <kbd>&rarr;</kbd> steer &nbsp;&middot;&nbsp; hold <kbd>Space</kbd> to drift &nbsp;&middot;&nbsp; let go and press again when the ring glows to boost</div>
 </div>
 

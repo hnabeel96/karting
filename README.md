@@ -16,6 +16,8 @@ No `npm install` needed: three.js is vendored in `client/vendor/` and the server
 
 To race from different places, put the same server on a droplet: see [deploy/README.md](deploy/README.md).
 
+**Install it like an app.** Open the game in Chrome on Android and tap **Install on this phone** on the title screen (or the browser menu's *Install app* / *Add to Home screen*; on iPhone, Safari's Share → *Add to Home Screen*). It then opens fullscreen and sideways from its own icon, and *Race bots* and free drive work offline. Online play needs the server, as always.
+
 ## Modes
 
 | Title screen | What it is | Needs the server? |

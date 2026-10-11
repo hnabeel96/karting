@@ -24,6 +24,7 @@ const TYPES = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.glb': 'model/gltf-binary',
+  '.webmanifest': 'application/manifest+json',
   '.ogg': 'audio/ogg',
   '.mp3': 'audio/mpeg',
 };
@@ -53,10 +54,13 @@ const server = http.createServer(async (req, res) => {
     const info = await stat(file);
     if (!info.isFile()) throw new Error('not a file');
     const body = await readFile(file);
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream',
       'Cache-Control': 'no-cache',
-    });
+    };
+    // the service worker sits in /client/ but must also cover /shared/
+    if (rel === '/client/sw.js') headers['Service-Worker-Allowed'] = '/';
+    res.writeHead(200, headers);
     res.end(body);
   } catch {
     res.writeHead(404);

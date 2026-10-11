@@ -1110,6 +1110,29 @@ document.addEventListener('visibilitychange', () => {
   last = performance.now();
 });
 
+// ---------------------------------------------------------------- install as an app
+
+// Offline cache + installability. Only where a service worker can run (served by our
+// own server over https or on localhost), never inside an embedded preview.
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+// Android Chrome offers installing; keep the offer and show our own button for it
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $('install').hidden = false;
+});
+$('install').addEventListener('click', async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice.catch(() => {});
+  installPrompt = null;
+  $('install').hidden = true;
+});
+window.addEventListener('appinstalled', () => ($('install').hidden = true));
+
 document.body.classList.add('ready');
 requestAnimationFrame(frame);
 
