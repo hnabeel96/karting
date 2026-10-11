@@ -57,6 +57,11 @@ export const TUNING = {
   fruitR: 1.3,
   fruitRespawn: 10,
   fruitMax: 10,
+  fruitSpeed: 0.12, // each mango adds this much top speed (m/s), like wumpa fruit
+  fruitLossImpact: 9, // a wall hit this hard knocks a mango loose
+
+  // Karts bumping each other
+  bumpBounce: 0.6,
 };
 
 export const NEUTRAL_INPUT = Object.freeze({ steer: 0, drift: false });
@@ -71,8 +76,8 @@ export function inWindow(charge) {
 // ---------------------------------------------------------------- world setup
 
 export function expandFruit(arena) {
-  const out = [];
-  for (const line of arena.fruitLines) {
+  const out = (arena.fruitPoints || []).map((p) => ({ x: p.x, z: p.z }));
+  for (const line of arena.fruitLines || []) {
     const [x0, z0] = line.from;
     const [x1, z1] = line.to;
     for (let i = 0; i < line.count; i++) {
@@ -140,8 +145,9 @@ export function stepWorld(world, inputs = {}) {
   for (const k of world.karts) {
     stepKart(k, inputs[k.id] || NEUTRAL_INPUT, events);
     collideArena(k, world.arena, events);
-    collectPickups(k, world, events);
   }
+  collideKarts(world.karts, events);
+  for (const k of world.karts) collectPickups(k, world, events);
   respawnPickups(world, events);
   world.tick++;
   return events;
@@ -264,7 +270,7 @@ export function stepKart(k, input, events) {
   let vs = k.vx * sx + k.vz * sz;
 
   const boosting = k.boostT > 0;
-  let target = boosting ? T.boostSpeed[k.boostLevel] : T.topSpeed;
+  let target = boosting ? T.boostSpeed[k.boostLevel] : T.topSpeed + k.fruit * T.fruitSpeed;
   if (k.state === 'drift' && !boosting) target *= T.driftDrag;
 
   if (vf < target) vf = Math.min(target, vf + (boosting ? T.boostAccel : T.accel) * dt);
@@ -304,6 +310,10 @@ function resolve(k, nx, nz, depth, events) {
     if (impact >= T.bonkMin) {
       events.push({ type: 'bonk', kart: k.id, impact, x: k.x - nx * T.radius, z: k.z - nz * T.radius });
     }
+    if (impact >= T.fruitLossImpact && k.fruit > 0) {
+      k.fruit--;
+      events.push({ type: 'fruitLost', kart: k.id, count: k.fruit });
+    }
     if (impact >= T.bonkBreaksDrift && k.state === 'drift') endDrift(k, events, false);
   }
 }
@@ -317,6 +327,20 @@ export function collideArena(k, arena, events) {
       const d = Math.hypot(dx, dz);
       const min = o.r + R;
       if (d < min && d > 1e-6) resolve(k, dx / d, dz / d, min - d, events);
+    } else if (o.shape === 'seg') {
+      // a thick line: wall pieces that follow a curving track
+      const ex = o.x2 - o.x1;
+      const ez = o.z2 - o.z1;
+      const len2 = ex * ex + ez * ez;
+      let t = len2 > 0 ? ((k.x - o.x1) * ex + (k.z - o.z1) * ez) / len2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = k.x - (o.x1 + ex * t);
+      const dz = k.z - (o.z1 + ez * t);
+      const min = o.r + R;
+      if (Math.abs(dx) < min && Math.abs(dz) < min) {
+        const d = Math.hypot(dx, dz);
+        if (d < min && d > 1e-6) resolve(k, dx / d, dz / d, min - d, events);
+      }
     } else {
       const cx = clamp(k.x, o.x - o.hw, o.x + o.hw);
       const cz = clamp(k.z, o.z - o.hd, o.z + o.hd);
@@ -341,6 +365,38 @@ export function collideArena(k, arena, events) {
   if (k.x < -lim) resolve(k, 1, 0, -lim - k.x, events);
   if (k.z > lim) resolve(k, 0, -1, k.z - lim, events);
   if (k.z < -lim) resolve(k, 0, 1, -lim - k.z, events);
+}
+
+/** Karts bounce off each other: equal mass, the push is shared. */
+export function collideKarts(karts, events) {
+  const min = T.radius * 2;
+  for (let i = 0; i < karts.length; i++) {
+    for (let j = i + 1; j < karts.length; j++) {
+      const a = karts[i];
+      const b = karts[j];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= min * min || d2 < 1e-9) continue;
+      const d = Math.sqrt(d2);
+      const nx = dx / d;
+      const nz = dz / d;
+      const push = (min - d) / 2;
+      a.x -= nx * push;
+      a.z -= nz * push;
+      b.x += nx * push;
+      b.z += nz * push;
+      const rel = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
+      if (rel < 0) {
+        const j2 = (-(1 + T.bumpBounce) * rel) / 2;
+        a.vx -= j2 * nx;
+        a.vz -= j2 * nz;
+        b.vx += j2 * nx;
+        b.vz += j2 * nz;
+        if (-rel > 2) events.push({ type: 'bump', a: a.id, b: b.id, impact: -rel, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 });
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------- pickups
