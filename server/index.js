@@ -1,15 +1,19 @@
-// Tiny static file server for playing on phones over your wifi.
-//   npm start        -> http://<this-computer's-ip>:3000
-// No dependencies. Later this file grows into the referee (WebSocket + game loop).
+// The game server: serves the game files and runs the race room.
+//   npm start                 -> http://<this-computer's-ip>:3000  (phones on the same wifi)
+//   PORT=8080 npm start       -> another port
+// No dependencies: Node 20+ only.
 
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { attachWebSocket } from './ws.js';
+import { Room } from './room.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -34,6 +38,10 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(302, { Location: '/client/' });
       return res.end();
     }
+    if (rel === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, players: room.players.size, phase: room.race.phase }));
+    }
     if (rel.endsWith('/')) rel += 'index.html';
     const file = path.resolve(ROOT, '.' + rel);
     const top = path.relative(ROOT, file).split(path.sep)[0];
@@ -55,8 +63,30 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log('\n  Karting is running. Open one of these on your phone (same wifi):\n');
+const room = new Room({ log: (m) => console.log(new Date().toLocaleTimeString(), m) });
+room.run();
+
+attachWebSocket(server, '/ws', (ws) => {
+  let player = null;
+  ws.on('message', (raw) => {
+    if (!player) {
+      // the first message must say hello
+      let m;
+      try {
+        m = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      if (m.t === 'hello') player = room.join(ws, m);
+      return;
+    }
+    room.onMessage(player, raw);
+  });
+  ws.on('close', () => player && room.removePlayer(player.id));
+});
+
+server.listen(PORT, HOST, () => {
+  console.log('\n  Karting server is running. Open one of these on each phone (same wifi):\n');
   for (const list of Object.values(networkInterfaces())) {
     for (const a of list || []) {
       if (a.family === 'IPv4' && !a.internal) console.log(`    http://${a.address}:${PORT}`);
