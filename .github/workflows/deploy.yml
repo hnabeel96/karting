@@ -63,7 +63,14 @@ jobs:
         if: steps.check.outputs.ready == 'true'
         run: |
           set -a; . deploy/config.env; set +a
-          ssh droplet "bash ~/karting-release/deploy/setup.sh '${DOMAIN}'"
+          set -o pipefail
+          if ! ssh droplet "bash ~/karting-release/deploy/setup.sh '${DOMAIN}'" 2>&1 | tee setup.log; then
+            # surface the end of the log as an annotation so it shows on the commit
+            msg=$(tail -n 20 setup.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=Droplet setup failed::${msg}"
+            exit 1
+          fi
+          grep -E '^(==>|!!)' setup.log | sed 's/^/::notice::/' | tail -n 8 || true
 
       - name: Check it is up
         if: steps.check.outputs.ready == 'true'
