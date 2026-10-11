@@ -64,7 +64,7 @@ jobs:
         run: |
           set -a; . deploy/config.env; set +a
           set -o pipefail
-          if ! ssh droplet "bash ~/karting-release/deploy/setup.sh '${DOMAIN}'" 2>&1 | tee setup.log; then
+          if ! ssh droplet "bash ~/karting-release/deploy/setup.sh '${DOMAIN}' '${PORT:-3000}'" 2>&1 | tee setup.log; then
             # surface the end of the log as an annotation so it shows on the commit
             msg=$(tail -n 20 setup.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=Droplet setup failed::${msg}"
@@ -76,7 +76,7 @@ jobs:
         if: steps.check.outputs.ready == 'true'
         run: |
           set -a; . deploy/config.env; set +a
-          ssh droplet 'curl -fsS http://127.0.0.1:3000/health'
+          ssh droplet "curl -fsS http://127.0.0.1:${PORT:-3000}/health"
           if [ -n "$DOMAIN" ]; then
             for i in 1 2 3 4 5 6; do
               if curl -fsS "https://$DOMAIN/health"; then echo; echo "Live at https://$DOMAIN"; exit 0; fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs or updates the Karting server on an Ubuntu/Debian droplet. Safe to run again and again.
 #
-#   bash deploy/setup.sh [domain]
+#   bash deploy/setup.sh [domain] [port]
 #
 # Run from an unpacked copy of the repo (the GitHub Actions deploy does this for you).
 #  - installs Node 22 if Node 20+ is missing
@@ -14,9 +14,9 @@
 set -euo pipefail
 
 DOMAIN="${1:-}"
+PORT="${2:-3000}"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 APP=/opt/karting
-PORT=3000
 SUDO=""
 [ "$(id -u)" -eq 0 ] || SUDO="sudo"
 
@@ -55,6 +55,15 @@ fi
 $SUDO chmod -R a+rX "$APP"
 
 # ------------------------------------------------------------------ service
+# make sure the port is ours to use (stop our own old copy first)
+$SUDO systemctl stop karting 2>/dev/null || true
+sleep 0.5
+owner="$($SUDO ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -o 'users:(("[^"]*' | head -1 | sed 's/users:(("//' || true)"
+if [ -n "$owner" ]; then
+  warn "Port $PORT is already used by '$owner' on this droplet. Pick another PORT in deploy/config.env."
+  exit 1
+fi
+
 HOST_BIND=127.0.0.1
 [ -z "$DOMAIN" ] && HOST_BIND=0.0.0.0
 say "Installing the karting service (listening on $HOST_BIND:$PORT)"
