@@ -5,7 +5,7 @@ import { TICK, createWorld } from '../shared/sim.js';
 import { createRace, startRace, stepRace, RACE } from '../shared/race.js';
 import { createPathBot, pathBotInput } from '../shared/bot.js';
 import { SNAPSHOT_EVERY, packKart, packEntrant, packEvents, bits } from '../shared/net.js';
-import circuit from '../shared/arenas/circuit.js';
+import { getTrack } from '../shared/arenas/index.js';
 
 const MAX_PLAYERS = 8;
 const BOT_NAMES = ['Mango', 'Pebble', 'Tikka', 'Zippy', 'Coco', 'Jumbo', 'Kiwi', 'Rocket'];
@@ -14,12 +14,17 @@ const INPUT_QUEUE_MAX = 6;
 let nextId = 1;
 
 export class Room {
-  constructor({ arena = circuit, laps = arena.laps || 3, log = () => {} } = {}) {
-    this.arena = arena;
-    this.laps = laps;
+  /**
+   * @param track  id of the track to start on (players can change it in the lobby)
+   * @param laps   force this many laps on every track (otherwise each track's own)
+   */
+  constructor({ track, laps, log = () => {} } = {}) {
+    this.arena = getTrack(track);
+    this.lapsOverride = laps || 0;
+    this.laps = this.lapsOverride || this.arena.laps || 3;
     this.log = log;
     this.players = new Map(); // id -> player
-    this.world = createWorld(arena);
+    this.world = createWorld(this.arena);
     this.race = createRace(this.world, { laps: this.laps });
     this.pending = []; // events since the last snapshot
     this.tickCount = 0;
@@ -75,13 +80,29 @@ export class Room {
     const id = 'b' + nextId++;
     const used = new Set([...this.players.values()].map((p) => p.name));
     const name = BOT_NAMES.find((n) => !used.has(n)) || 'Bot';
-    const count = this.bots().length;
-    const bot = createPathBot(this.arena.track, {
-      lane: [-0.6, 0.6, 0, -1, 1, 0.3, -0.3, 0.8][count % 8],
-      skill: [0.85, 0.7, 0.95, 0.6, 0.8, 0.75, 0.9, 0.65][count % 8],
+    const bot = this.makeBot(this.bots().length);
+    this.players.set(id, { id, name, color: this.freeColor(), bot, queue: [], last: { steer: 0, drift: false }, ack: 0, ping: 0 });
+    this.broadcastLobby();
+  }
+
+  makeBot(n) {
+    return createPathBot(this.arena.track, {
+      lane: [-0.6, 0.6, 0, -1, 1, 0.3, -0.3, 0.8][n % 8],
+      skill: [0.85, 0.7, 0.95, 0.6, 0.8, 0.75, 0.9, 0.65][n % 8],
       obstacles: this.arena.obstacles,
     });
-    this.players.set(id, { id, name, color: this.freeColor(), bot, queue: [], last: { steer: 0, drift: false }, ack: 0, ping: 0 });
+  }
+
+  /** switch tracks (lobby only): bots relearn the new racing line */
+  setTrack(id) {
+    const arena = getTrack(id);
+    if (arena.id !== id || arena === this.arena) return;
+    this.arena = arena;
+    this.laps = this.lapsOverride || arena.laps || 3;
+    this.world = createWorld(arena);
+    this.race = createRace(this.world, { laps: this.laps });
+    this.bots().forEach((p, i) => (p.bot = this.makeBot(i)));
+    this.log(`track: ${arena.name}`);
     this.broadcastLobby();
   }
 
@@ -143,6 +164,9 @@ export class Room {
         break;
       case 'addBot':
         if (this.race.phase === 'lobby') this.addBot();
+        break;
+      case 'track':
+        if (this.race.phase === 'lobby') this.setTrack(String(m.id));
         break;
       case 'removeBot':
         if (this.race.phase === 'lobby') this.removeBot();
@@ -235,7 +259,7 @@ export class Room {
       t: 'lobby',
       phase: this.race.phase,
       arena: this.arena.id,
-      laps: this.race.laps,
+      laps: this.laps,
       players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, color: p.color, bot: !!p.bot, ping: p.ping, racing: !!this.race.entrants[p.id] })),
     };
   }

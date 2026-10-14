@@ -4,7 +4,7 @@
 // deploy; when offline the last copy still loads, so "Race bots" and free drive work.
 // Live race traffic (/ws) and /health are never touched.
 
-const CACHE = 'karting-v1';
+const CACHE = 'karting-v2';
 
 // the files needed to start the game at all
 const SHELL = [
@@ -31,15 +31,28 @@ const SHELL = [
   '../shared/track.js',
   '../shared/bot.js',
   '../shared/net.js',
-  '../shared/arenas/circuit.js',
+  '../shared/defineTrack.js',
+  '../shared/arenas/index.js',
   '../shared/arenas/temple.js',
 ];
+
+// every race track listed in the registry, found by reading its imports,
+// so adding a track never means editing this file
+const REGISTRY = '../shared/arenas/index.js';
+async function trackFiles() {
+  try {
+    const text = await (await fetch(REGISTRY, { cache: 'no-store' })).text();
+    return [...text.matchAll(/from\s+'\.\/([\w-]+\.js)'/g)].map((m) => '../shared/arenas/' + m[1]);
+  } catch {
+    return [];
+  }
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((c) => c.addAll(SHELL))
+      .then(async (c) => c.addAll([...new Set([...SHELL, ...(await trackFiles())])]))
       .then(() => self.skipWaiting()),
   );
 });

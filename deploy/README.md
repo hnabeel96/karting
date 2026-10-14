@@ -91,4 +91,5 @@ Set these in `karting.service` under `[Service]` as `Environment=NAME=value`:
 |---|---|---|
 | `PORT` | 3000 | port the server listens on |
 | `HOST` | 0.0.0.0 | `127.0.0.1` keeps it private behind Caddy or nginx |
-| `LAPS` | 3 | laps per race |
+| `TRACK` | first in the list | track the room starts on (players can switch in the lobby) |
+| `LAPS` | each track's own | force this many laps on every track |

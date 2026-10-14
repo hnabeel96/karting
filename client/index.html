@@ -195,6 +195,16 @@
     font: 15px/1 var(--display); letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--cream); background: var(--stone); padding: 8px 14px; border-radius: 999px;
   }
+  .track-pick { display: flex; align-items: center; gap: 8px; }
+  .track-pick .arrow {
+    width: 40px; height: 40px; border: 0; border-radius: 50%; cursor: pointer; padding: 0;
+    font: 16px/1 var(--display); color: var(--cream); background: rgba(31,74,46,0.75);
+  }
+  .track-pick .arrow:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  .track-pick .arena-tag { min-width: 12em; text-align: center; }
+  .tracks { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tracks .btn[aria-pressed="true"] { background: var(--gold); color: var(--ink); }
+  .tracks .btn .laps { font: 800 11px/1 var(--body); letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7; margin-left: 6px; }
   #play {
     font: 34px/1 var(--display); letter-spacing: 0.04em; color: var(--ink);
     background: var(--gold); border: 0; border-radius: 22px; padding: 18px 54px 20px;
@@ -412,7 +422,11 @@
 
 <div id="title">
   <h1>Kart<span>ing</span></h1>
-  <div class="arena-tag">Temple Circuit</div>
+  <div class="track-pick">
+    <button class="arrow" id="track-prev" aria-label="Previous track">&#9664;</button>
+    <div class="arena-tag" id="track-name" aria-live="polite">Temple Circuit</div>
+    <button class="arrow" id="track-next" aria-label="Next track">&#9654;</button>
+  </div>
   <div class="spacer"></div>
   <div class="menu">
     <button id="play">Race a friend</button>
@@ -442,6 +456,8 @@
         <div class="swatches" id="swatches"></div>
       </div>
       <div class="col">
+        <label>Track</label>
+        <div class="tracks" id="tracks"></div>
         <label>On the grid</label>
         <ul class="players" id="players"></ul>
         <div class="row">

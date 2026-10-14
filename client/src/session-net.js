@@ -6,6 +6,7 @@
 
 import { createKart, stepKart, collideArena, expandFruit } from '@shared/sim.js';
 import { unpackKart, unpackEntrant } from '@shared/net.js';
+import { getTrack } from '@shared/arenas/index.js';
 import { lerp, lerpAngle } from './util.js';
 
 const INTERP_DELAY = 110; // ms behind the newest snapshot that other karts are drawn
@@ -34,8 +35,7 @@ export class NetSession {
     this.mePrev = null;
     this.err = { x: 0, z: 0, yaw: 0 };
     this.buffer = []; // [{at, karts: Map}]
-    this.crates = arena.crates.map(() => true);
-    this.fruit = expandFruit(arena).map(() => true);
+    this.setArena(arena);
     this.rtt = 0;
     this.onLobby = onLobby || (() => {});
     this.onStatus = onStatus || (() => {});
@@ -57,6 +57,13 @@ export class NetSession {
       if (this.status !== 'failed') this.setStatus('closed');
     });
     ws.addEventListener('error', () => this.fail('error'));
+  }
+
+  /** the room is on this track now (it can change in the lobby) */
+  setArena(arena) {
+    this.arena = arena;
+    this.crates = arena.crates.map(() => true);
+    this.fruit = expandFruit(arena).map(() => true);
   }
 
   setStatus(s) {
@@ -97,6 +104,7 @@ export class NetSession {
     if (m.t === 'welcome') this.localId = m.id;
     else if (m.t === 'lobby') {
       this.lobby = m;
+      if (m.arena && m.arena !== this.arena.id) this.setArena(getTrack(m.arena));
       for (const p of m.players) {
         this.names[p.id] = p.name;
         this.colors[p.id] = p.color;
@@ -260,6 +268,7 @@ export class NetSession {
   // lobby actions
   start() { this.send({ t: 'start' }); }
   toLobby() { this.send({ t: 'lobby' }); }
+  chooseTrack(id) { this.send({ t: 'track', id }); }
   addBot() { this.send({ t: 'addBot' }); }
   removeBot() { this.send({ t: 'removeBot' }); }
   rename(name, color) { this.send({ t: 'name', name, color }); }

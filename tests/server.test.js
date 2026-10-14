@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { unpackKart, unpackEntrant } from '../shared/net.js';
+import { getTrack } from '../shared/arenas/index.js';
 
 const PORT = 3000 + Math.floor(Math.random() * 2000) + 4000;
 let server;
@@ -100,5 +101,35 @@ test('two players and two bots race: lobby, countdown, go, moving karts, acks', 
     const s = a.snaps[a.snaps.length - 1];
     return s.k.length === 3 && a.lobby.players.length === 3;
   });
+  a.ws.close();
+});
+
+test('players pick the track in the lobby; the race and the bots use it', async () => {
+  const a = client('Eko');
+  await a.ready;
+  await until(() => a.id && a.lobby);
+  assert.equal(a.lobby.arena, 'circuit');
+  a.send({ t: 'addBot' });
+  a.send({ t: 'track', id: 'no-such-track' });
+  a.send({ t: 'track', id: 'grove' });
+  await until(() => a.lobby.arena === 'grove' && a.lobby.players.length === 2);
+  const grove = getTrack('grove');
+  assert.equal(a.lobby.laps, grove.laps);
+  assert.equal((await (await fetch(`http://127.0.0.1:${PORT}/health`)).json()).track, 'grove');
+
+  a.send({ t: 'start' });
+  await until(() => a.snaps.some((s) => s.ph === 'race' && s.k.length === 2), 8000);
+  // the grid is the grove's grid
+  const s = a.snaps.find((s) => s.ph === 'countdown');
+  for (const k of s.k.map((arr) => { const k = {}; unpackKart(arr, k); return k; })) assert.ok(grove.spawns.some((p) => Math.hypot(p.x - k.x, p.z - k.z) < 0.5), `kart at ${k.x},${k.z}`);
+  // no switching tracks mid-race
+  a.send({ t: 'track', id: 'circuit' });
+  await wait(200);
+  assert.equal(a.lobby.arena, 'grove');
+  // the bot is driving the grove's line
+  await wait(1500);
+  const last = a.snaps[a.snaps.length - 1];
+  const bot = last.k.map((arr) => { const k = {}; unpackKart(arr, k); return k; }).find((k) => k.id !== a.id);
+  assert.ok(grove.track.center.some((c) => Math.hypot(c.x - bot.x, c.z - bot.z) < grove.track.width / 2 + 1), 'bot is on the grove road');
   a.ws.close();
 });

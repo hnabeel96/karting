@@ -1,7 +1,8 @@
 // The game server: serves the game files and runs the race room.
 //   npm start                 -> http://<this-computer's-ip>:3000  (phones on the same wifi)
 //   PORT=8080 npm start       -> another port
-//   LAPS=5 npm start          -> longer races (default 3)
+//   TRACK=grove npm start     -> start on another track (players can switch in the lobby)
+//   LAPS=5 npm start          -> force this many laps on every track (default: each track's own)
 // No dependencies: Node 20+ only.
 
 import http from 'node:http';
@@ -42,7 +43,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (rel === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, players: room.players.size, phase: room.race.phase }));
+      return res.end(JSON.stringify({ ok: true, players: room.players.size, phase: room.race.phase, track: room.arena.id }));
     }
     if (rel.endsWith('/')) rel += 'index.html';
     const file = path.resolve(ROOT, '.' + rel);
@@ -69,6 +70,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const room = new Room({
+  track: process.env.TRACK,
   laps: Number(process.env.LAPS) || undefined,
   log: (m) => console.log(new Date().toLocaleTimeString(), m),
 });

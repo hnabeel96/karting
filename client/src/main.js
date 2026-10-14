@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { TICK, TUNING, createWorld, inWindow } from '@shared/sim.js';
 import temple from '@shared/arenas/temple.js';
-import circuit from '@shared/arenas/circuit.js';
+import { TRACKS, DEFAULT_TRACK, getTrack } from '@shared/arenas/index.js';
 import { buildSky, buildLights, buildArena, PALETTE } from './arena3d.js';
 import { KartModel, KART_COLORS, BOOST_COLORS } from './kartModel.js';
 import { Particles, SkidMarks, Debris, Rings } from './fx.js';
@@ -148,7 +148,8 @@ const debug = { autopilot: false, colliders: false };
 let mode = 'title'; // 'title' | 'drive' | 'bots' | 'online'
 let session = null; // the local session being played (drive / bots)
 let net = null;
-let attract = new LocalSession(circuit, { player: false, bots: 3 });
+let trackId = getTrack(store.get('track', DEFAULT_TRACK)).id; // the track picked on the title screen
+let attract = new LocalSession(getTrack(trackId), { player: false, bots: 3 });
 let shown = null; // the session drawn last frame
 
 /** the session to draw and step this frame */
@@ -201,7 +202,7 @@ function startLocal(kind) {
   mode = kind;
   session =
     kind === 'bots'
-      ? new LocalSession(circuit, { player: true, bots: 3, race: true, name: playerName || 'You', color: playerColor })
+      ? new LocalSession(getTrack(trackId), { player: true, bots: 3, race: true, name: playerName || 'You', color: playerColor })
       : new LocalSession(temple, { player: true, name: playerName || 'You', color: playerColor });
   $('lobby').hidden = true;
   setPlaying(true);
@@ -217,10 +218,19 @@ function startOnline() {
   showLobby();
   if (net && net.status === 'open') return;
   closeNet();
-  net = new NetSession(circuit, {
+  let first = true;
+  net = new NetSession(getTrack(trackId), {
     name: playerName,
     color: playerColor,
-    onLobby: () => renderLobby(),
+    onLobby: (lobby) => {
+      // first one into an empty room: start it on the track picked on the title screen
+      if (first && lobby.players.some((p) => p.id === net.localId)) {
+        first = false;
+        const alone = lobby.players.filter((p) => !p.bot).length === 1;
+        if (alone && lobby.phase === 'lobby' && lobby.arena !== trackId) net.chooseTrack(trackId);
+      }
+      renderLobby();
+    },
     onStatus: () => renderLobby(),
   });
 }
@@ -237,6 +247,7 @@ function toTitle() {
   $('lobby').hidden = true;
   $('results').hidden = true;
   setPlaying(false);
+  renderTitleTrack();
   snapCamera = true;
 }
 
@@ -315,10 +326,66 @@ function renderLobby() {
   const input = $('name-input');
   if (document.activeElement !== input && me) input.value = me.name;
 
+  renderTrackChoices(lobby);
+
   const bots = lobby.players.filter((p) => p.bot).length;
   $('bot-add').disabled = lobby.players.length >= 8 || lobby.phase !== 'lobby';
   $('bot-remove').disabled = bots === 0 || lobby.phase !== 'lobby';
   $('start-race').disabled = lobby.phase !== 'lobby';
+}
+
+// ---------------------------------------------------------------- track picker (title screen)
+
+/** show this track behind the menus (the demo race) */
+function showTrack(arena) {
+  if (attract.arena === arena) return;
+  attract = new LocalSession(arena, { player: false, bots: 3 });
+  snapCamera = true;
+}
+
+function pickTrack(step) {
+  const i = TRACKS.findIndex((t) => t.id === trackId);
+  trackId = TRACKS[(i + step + TRACKS.length) % TRACKS.length].id;
+  store.set('track', trackId);
+  sound.start();
+  sound.click();
+  renderTitleTrack();
+}
+
+function renderTitleTrack() {
+  const t = getTrack(trackId);
+  $('track-name').textContent = t.name;
+  $('track-prev').hidden = $('track-next').hidden = TRACKS.length < 2;
+  showTrack(t);
+}
+
+$('track-prev').addEventListener('click', () => pickTrack(-1));
+$('track-next').addEventListener('click', () => pickTrack(1));
+
+function renderTrackChoices(lobby) {
+  const box = $('tracks');
+  box.replaceChildren(
+    ...TRACKS.map((t) => {
+      const b = document.createElement('button');
+      b.className = 'btn quiet small';
+      b.setAttribute('aria-pressed', String(t.id === lobby.arena));
+      b.disabled = lobby.phase !== 'lobby';
+      b.textContent = t.name;
+      if (t.id === lobby.arena) {
+        const laps = document.createElement('span');
+        laps.className = 'laps';
+        laps.textContent = lobby.laps + ' laps';
+        b.append(laps);
+      }
+      b.addEventListener('click', () => {
+        if (t.id === lobby.arena || !net) return;
+        sound.click();
+        net.chooseTrack(t.id);
+      });
+      return b;
+    }),
+  );
+  showTrack(getTrack(lobby.arena));
 }
 
 $('play').addEventListener('click', startOnline);
@@ -401,6 +468,7 @@ $('results-back').addEventListener('click', () => {
 
 const cam = { yaw: 0, fov: 62, trauma: 0, pos: new THREE.Vector3(), look: new THREE.Vector3(), orbit: 0, punch: 0 };
 let snapCamera = true;
+renderTitleTrack();
 
 function baseFov() {
   return camera.aspect > 1.9 ? 54 : camera.aspect < 1 ? 74 : 62;

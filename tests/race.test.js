@@ -4,6 +4,8 @@ import { TICK, TUNING, createWorld, addKart, stepWorld, speedOf } from '../share
 import { createRace, startRace, stepRace, standings, RACE } from '../shared/race.js';
 import { createPathBot, pathBotInput } from '../shared/bot.js';
 import circuit from '../shared/arenas/circuit.js';
+import { TRACKS, getTrack } from '../shared/arenas/index.js';
+import { defineTrack } from '../shared/defineTrack.js';
 import temple from '../shared/arenas/temple.js';
 
 const segDist = (px, pz, o) => {
@@ -14,41 +16,90 @@ const segDist = (px, pz, o) => {
   return Math.hypot(px - (o.x1 + ex * u), pz - (o.z1 + ez * u)) - o.r;
 };
 
-test('circuit: the road is clear between its walls everywhere', () => {
-  const t = circuit.track;
-  for (const c of t.center) {
-    for (const w of t.walls) assert.ok(segDist(c.x, c.z, w) > t.width / 2 - 0.5);
-  }
-});
+// every registered track must pass these: add a track and npm test checks it
+for (const arena of TRACKS) {
+  const t = arena.track;
+  const tag = `${arena.id}:`;
 
-test('circuit: separate parts of the track never overlap', () => {
-  const t = circuit.track;
-  const n = t.center.length;
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const along = Math.min(j - i, n - (j - i)) * (t.length / n);
-      if (along < 40) continue;
-      assert.ok(Math.hypot(t.center[i].x - t.center[j].x, t.center[i].z - t.center[j].z) > t.width + 4);
+  test(`${tag} the road is clear between its walls everywhere`, () => {
+    for (const c of t.center) {
+      for (const w of t.walls) assert.ok(segDist(c.x, c.z, w) > t.width / 2 - 0.5);
     }
-  }
+  });
+
+  test(`${tag} separate parts of the track never overlap`, () => {
+    const n = t.center.length;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const along = Math.min(j - i, n - (j - i)) * (t.length / n);
+        if (along < 40) continue;
+        const gap = Math.hypot(t.center[i].x - t.center[j].x, t.center[i].z - t.center[j].z);
+        assert.ok(gap > t.width + 4, `road comes within ${gap.toFixed(1)} m of itself at ${(i / n).toFixed(2)} and ${(j / n).toFixed(2)} of a lap`);
+      }
+    }
+  });
+
+  test(`${tag} no corner is too tight to drive`, () => {
+    const n = t.center.length;
+    for (let i = 0; i < n; i++) {
+      const a = t.center[(i - 2 + n) % n];
+      const b = t.center[i];
+      const c = t.center[(i + 2) % n];
+      const area = Math.abs((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) / 2;
+      if (!area) continue;
+      const R = (Math.hypot(b.x - a.x, b.z - a.z) * Math.hypot(c.x - b.x, c.z - b.z) * Math.hypot(a.x - c.x, a.z - c.z)) / (4 * area);
+      assert.ok(R > 12, `corner radius ${R.toFixed(1)} m at ${(i / n).toFixed(2)} of a lap (needs > 12 m): spread its control points out`);
+    }
+  });
+
+  test(`${tag} scenery stays off the road and inside the world`, () => {
+    for (const d of arena.decor) {
+      assert.ok(Math.abs(d.x) < arena.half && Math.abs(d.z) < arena.half, `${d.kind} at ${d.x},${d.z} is outside the world`);
+      if (d.kind === 'temple' || d.kind === 'ruin') continue;
+      for (const c of t.center) assert.ok(Math.hypot(c.x - d.x, c.z - d.z) > t.width / 2 + 2, `${d.kind} at ${d.x},${d.z} is on the road`);
+    }
+  });
+
+  test(`${tag} the grid is behind the start line and facing it`, () => {
+    const g = t.gates[0];
+    for (const s of arena.spawns) {
+      const toLine = (g.mx - s.x) * g.tx + (g.mz - s.z) * g.tz;
+      assert.ok(toLine > 3, 'behind the line');
+      assert.ok(Math.cos(s.yaw - Math.atan2(g.tx, g.tz)) > 0.9, 'facing forward');
+    }
+  });
+
+  test(`${tag} pickups sit on the road`, () => {
+    const onRoad = ([x, z]) => t.center.some((c) => Math.hypot(c.x - x, c.z - z) < t.width / 2);
+    for (const c of arena.crates) assert.ok(onRoad(c), `crate at ${c}`);
+    for (const p of arena.fruitPoints) assert.ok(onRoad([p.x, p.z]), `mango at ${p.x},${p.z}`);
+  });
+
+  test(`${tag} four bots finish the race with sensible places and lap times`, () => {
+    const { race, events } = botRace(4, arena.laps, arena);
+    assert.equal(race.phase, 'results');
+    const s = standings(race);
+    assert.deepEqual(s.map((r) => r.place), [1, 2, 3, 4]);
+    assert.ok(s[0].finished, 'someone finished');
+    const laps = events.filter((e) => e.type === 'lap');
+    assert.ok(laps.every((e) => e.time > 12 && e.time < 60), JSON.stringify(laps.map((e) => e.time.toFixed(1))));
+    const rescues = events.filter((e) => e.type === 'rescue').length;
+    assert.ok(rescues <= 4, `bots needed rescuing ${rescues} times: a hazard or corner is too awkward`);
+  });
+}
+
+test('track registry: unique ids, and unknown ids fall back to the default', () => {
+  assert.equal(new Set(TRACKS.map((t) => t.id)).size, TRACKS.length);
+  assert.equal(getTrack('nope'), TRACKS[0]);
+  for (const t of TRACKS) assert.equal(getTrack(t.id), t);
 });
 
-test('circuit: scenery stays off the road and inside the walls', () => {
-  const t = circuit.track;
-  for (const d of circuit.decor) {
-    assert.ok(Math.abs(d.x) < circuit.half && Math.abs(d.z) < circuit.half);
-    if (d.kind === 'temple' || d.kind === 'ruin') continue;
-    for (const c of t.center) assert.ok(Math.hypot(c.x - d.x, c.z - d.z) > t.width / 2 + 2, `${d.kind} at ${d.x},${d.z}`);
-  }
-});
-
-test('circuit: the grid is behind the start line and facing it', () => {
-  const g = circuit.track.gates[0];
-  for (const s of circuit.spawns) {
-    const toLine = (g.mx - s.x) * g.tx + (g.mz - s.z) * g.tz;
-    assert.ok(toLine > 3, 'behind the line');
-    assert.ok(Math.cos(s.yaw - Math.atan2(g.tx, g.tz)) > 0.9, 'facing forward');
-  }
+test('defineTrack explains a bad track file', () => {
+  assert.throws(() => defineTrack({ id: 'x', name: 'X', control: [[0, 0], [1, 1]] }), /at least 4 control points/);
+  assert.throws(() => defineTrack({ id: 'Bad Id', name: 'X', control: [] }), /lowercase/);
+  const control = [[0, -40], [40, 0], [0, 40], [-40, 0]];
+  assert.throws(() => defineTrack({ id: 'x', name: 'X', control, scenery: [{ kind: 'castle', count: 1 }] }), /scenery kind "castle"/);
+  assert.throws(() => defineTrack({ id: 'x', name: 'X', control, hazards: [{ kind: 'lava', at: 0.5 }] }), /hazard kind "lava"/);
 });
 
 test('segment walls stop a kart', () => {
@@ -81,12 +132,12 @@ test('mangoes raise top speed a little', () => {
   assert.ok(speedOf(k) > TUNING.topSpeed + 1);
 });
 
-function botRace(n, laps = 3) {
-  const w = createWorld(circuit);
+function botRace(n, laps = 3, arena = circuit) {
+  const w = createWorld(arena);
   const race = createRace(w, { laps });
   const ids = Array.from({ length: n }, (_, i) => 'k' + i);
   startRace(race, w, ids);
-  const bots = Object.fromEntries(ids.map((id, i) => [id, createPathBot(circuit.track, { lane: [-1, 1, -0.5, 0.5, 0, -0.8, 0.8, 0.2][i], skill: 1 - i * 0.1, obstacles: circuit.obstacles })]));
+  const bots = Object.fromEntries(ids.map((id, i) => [id, createPathBot(arena.track, { lane: [-1, 1, -0.5, 0.5, 0, -0.8, 0.8, 0.2][i], skill: 1 - i * 0.1, obstacles: arena.obstacles })]));
   const events = [];
   let guard = 0;
   while (race.phase !== 'results' && guard++ < 60 * 400) {

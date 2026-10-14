@@ -8,7 +8,6 @@ WorkingDirectory=/opt/karting
 ExecStart=/usr/bin/node server/index.js
 Environment=PORT=3000
 Environment=HOST=127.0.0.1
-Environment=LAPS=3
 Restart=always
 RestartSec=2
 # run as an unprivileged user

@@ -10,7 +10,7 @@ On a laptop on the same wifi as both phones:
 npm start
 ```
 
-It prints an address like `http://192.168.1.20:3000`. Open it on both phones, turn them sideways, and tap **Race a friend**. You both land in the lobby: pick a name and colour, add bots if you want a fuller grid, and either of you taps **Start race**. Three laps of the Temple Circuit; the results screen has **Race again**.
+It prints an address like `http://192.168.1.20:3000`. Open it on both phones, turn them sideways, and tap **Race a friend**. You both land in the lobby: pick a name and colour, add bots if you want a fuller grid, and pick the track, and either of you taps **Start race**; the results screen has **Race again**.
 
 No `npm install` needed: three.js is vendored in `client/vendor/` and the server uses only Node built-ins (Node 20+).
 
@@ -23,7 +23,7 @@ To race from different places, put the same server on a droplet: see [deploy/REA
 | Title screen | What it is | Needs the server? |
 |---|---|---|
 | **Race a friend** | online race, up to 8 karts (friends + bots) | yes |
-| **Race bots** | 3-lap race against 3 bots, all on your phone | no |
+| **Race bots** | race 3 bots on the track picked with the arrows, all on your phone | no |
 | Free drive in the courtyard | the original Temple Courtyard arena, no race | no |
 
 ## Controls
@@ -40,9 +40,16 @@ The kart always accelerates; there is no gas pedal.
 
 **Mangoes** raise your top speed a little each (10 = Juiced). A hard crash knocks one loose. **Crates** slow you slightly when smashed; they will hold weapons later. Stuck against a wall for 3 seconds? You are put back on the road.
 
-## The Temple Circuit
+## Tracks
 
-A 590 m loop round the old temple: long start straight, fast sweeper, chicane, a tight hairpin at the top, and a twisty run home. The track is just 18 control points in `shared/arenas/circuit.js`; `shared/track.js` turns them into a smooth road with walls, kerbs, timing gates and an 8-kart grid. Move a point and the whole track (walls, gates, minimap, bot racing line) follows. `npm test` checks the road never pinches or overlaps itself.
+| Track | Length | Laps | |
+|---|---|---|---|
+| Temple Circuit | 587 m | 3 | long start straight, fast sweeper, chicane, tight hairpin, twisty run home |
+| Mango Grove | 549 m | 4 | a sprint, an S through the grove, a looping right-hander, a fast sweep home |
+
+Pick one with the arrows on the title screen (for *Race bots*) or the track buttons in the online lobby.
+
+**Adding a track is one config file plus one line**: a list of control points along the road, and optionally where the crates, mangoes, hazards and scenery go. `npm run track <id>` draws it and flags corners that are too tight; `npm test` checks every track and races bots round it. Step by step: [shared/arenas/README.md](shared/arenas/README.md).
 
 ## How multiplayer works
 
@@ -62,9 +69,10 @@ shared/   the rules: identical on phones and the server
   sim.js          kart physics, hop/drift/boost, walls, bumps, pickups
   race.js         grid, countdown, gates, laps, positions, rescue, results
   track.js        control points -> road, walls, gates, grid
+  defineTrack.js  a track's config -> everything the game needs
   bot.js          bots: courtyard circler and track racer
   net.js          snapshot packing
-  arenas/         circuit.js (race), temple.js (courtyard)
+  arenas/         index.js (the track list), circuit.js, grove.js, temple.js (courtyard)
 client/   what the phone runs
   index.html      HUD, touch controls, title, lobby and results screens
   src/main.js     frame loop, camera, events -> effects, HUD
@@ -98,7 +106,7 @@ The kart, crates, mangoes and every prop can be replaced with `.glb` files by li
 2. ~~Race circuit and multiplayer~~
 3. Crates hand out weapons: rocket, mine, homing missile, shockwave, shield; Juiced weapons
 4. Battle mode in the courtyard, room codes for several groups at once
-5. More tracks, bounce pads, explosive crates
+5. ~~Configurable tracks~~; more tracks, bounce pads, explosive crates
 
 ## Credits
 
