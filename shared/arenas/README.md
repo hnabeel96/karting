@@ -50,6 +50,7 @@ Only `id`, `name` and `control` are required.
 
 | Setting | Default | What it does |
 |---|---|---|
+| `theme` | `'temple'` | How it looks. A preset (`'temple'`: midday sandstone and stone walls; `'grove'`: late-afternoon orchard, red earth road, hedges, lawns), or a preset with overrides: `{ preset: 'grove', road: '#7a5a3a', sky: '#9fd3ff', walls: 'stone' }`. Every key is listed in `client/src/themes.js` |
 | `laps` | 3 | Laps per race (`LAPS=5 npm start` overrides every track) |
 | `width` | 16 | Road width in metres. 14 is tight, 18 is roomy |
 | `gates` | 16 | Timing gates per lap. More gates catch shortcuts sooner |
@@ -58,13 +59,13 @@ Only `id`, `name` and `control` are required.
 | `cratesPerRow` | 4 | Crates in each row |
 | `mangoes` | none | Trails: `{ from: 0.1, to: 0.2, count: 6, lateral: -3 }`. `from`/`to` are fractions of a lap. `lateral` is metres left (+) or right (-) of centre |
 | `hazards` | none | Things to steer round: `{ kind: 'rock' \| 'pillar', at: 0.5, lateral: 3 }` |
-| `landmarks` | none | Hand-placed scenery: `{ kind: 'temple', x, z, scale }`, `{ kind: 'ruin', x, z, hw, hd }`, `{ kind: 'pillar' \| 'rock', x, z, r }`, `{ kind: 'palm', x, z }` |
-| `scenery` | none | Scattered off the road: `{ kind: 'palm' \| 'rock' \| 'pillar', count: 40, seed: 3, gap: 6, r }`. Change `seed` for a different arrangement |
+| `landmarks` | none | Hand-placed scenery: `{ kind: 'temple', x, z, scale }`, `{ kind: 'ruin', x, z, hw, hd }`, `{ kind: 'pillar' \| 'rock' \| 'mangotree' \| 'bush', x, z, r }`, `{ kind: 'palm', x, z }` |
+| `scenery` | none | Scattered off the road: `{ kind: 'palm' \| 'rock' \| 'pillar' \| 'mangotree' \| 'bush', count: 40, seed: 3, gap: 6, r }`. Change `seed` for a different arrangement |
 | `keepClear` | none | Circles that scattered scenery avoids: `{ x, z, r }` |
 
 Fractions of a lap: 0 is the start line, 0.5 is halfway round. The numbers on the preview picture show where they fall.
 
-Scenery kinds share the game's art, so `.glb` models listed in `client/models/manifest.js` replace them on every track.
+A brand-new look (snow, beach, city) is a new preset in `client/src/themes.js`: copy `grove`, change the colours, and pick `ground`, `walls` and `arch` styles. Scenery kinds share the game's art, so `.glb` models listed in `client/models/manifest.js` replace them on every track.
 
 ## Starting the server on a track
 

@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { TICK, TUNING, createWorld, inWindow } from '@shared/sim.js';
 import temple from '@shared/arenas/temple.js';
 import { TRACKS, DEFAULT_TRACK, getTrack } from '@shared/arenas/index.js';
-import { buildSky, buildLights, buildArena, PALETTE } from './arena3d.js';
+import { buildSky, buildLights, buildArena, useTheme, PALETTE } from './arena3d.js';
 import { KartModel, KART_COLORS, BOOST_COLORS } from './kartModel.js';
 import { Particles, SkidMarks, Debris, Rings } from './fx.js';
 import { Controls } from './input.js';
@@ -61,11 +61,13 @@ const stages = new Map();
 function getStage(arena) {
   if (stages.has(arena.id)) return stages.get(arena.id);
   const scene = new THREE.Scene();
+  const theme = useTheme(arena);
   buildSky(scene);
   const lights = buildLights(scene);
   const world0 = createWorld(arena);
   const stage = {
     arena,
+    theme,
     scene,
     lights,
     arena3d: buildArena(scene, arena, world0, models),
@@ -746,7 +748,7 @@ function updateHud(v, list, local) {
 const rnd = Math.random;
 const exhausts = [new THREE.Vector3(), new THREE.Vector3()];
 
-function dustBurst(stage, x, z, n, color = PALETTE.sand, spread = 4) {
+function dustBurst(stage, x, z, n, color = stage.theme.sand, spread = 4) {
   for (let i = 0; i < n; i++) {
     const a = rnd() * Math.PI * 2;
     const s = spread * (0.4 + rnd() * 0.6);
@@ -773,7 +775,7 @@ function onEvents(v, stage, events, byId) {
       case 'hop':
         kv?.model.kick('hop');
         if (mine) sound.hop();
-        if (it) dustBurst(stage, it.pose.x, it.pose.z, 5, PALETTE.sand, 2.5);
+        if (it) dustBurst(stage, it.pose.x, it.pose.z, 5, stage.theme.sand, 2.5);
         break;
       case 'land':
         kv?.model.kick('land');
@@ -808,7 +810,7 @@ function onEvents(v, stage, events, byId) {
           sound.bonk(e.impact);
           addTrauma(Math.min(0.6, e.impact / 30));
         }
-        dustBurst(stage, e.x, e.z, 8, PALETTE.stoneLight, 5);
+        dustBurst(stage, e.x, e.z, 8, stage.theme.stoneLight, 5);
         for (let i = 0; i < 10; i++) {
           stage.sparks.emit({ x: e.x, y: 0.8, z: e.z, vx: (rnd() - 0.5) * 12, vy: 2 + rnd() * 5, vz: (rnd() - 0.5) * 12, life: 0.3 + rnd() * 0.2, size: 0.35, size1: 0.05, color: '#fff3c4', gravity: 18, drag: 2 });
         }

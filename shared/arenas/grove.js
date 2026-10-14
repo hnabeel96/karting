@@ -1,4 +1,5 @@
-// Mango Grove: a twisty run through the palm groves behind the temple.
+// Mango Grove: a twisty run through a mango orchard in the late-afternoon sun.
+// Red-earth road, clipped hedges, lawns and heavy mango trees.
 // A short sprint off the line, an S through the middle of the grove, a looping
 // right-hander at the top, and a fast sweep home. Shorter than the circuit, so 4 laps.
 
@@ -7,6 +8,7 @@ import { defineTrack } from '../defineTrack.js';
 export default defineTrack({
   id: 'grove',
   name: 'Mango Grove',
+  theme: 'grove',
   laps: 4,
   width: 15,
 
@@ -44,14 +46,17 @@ export default defineTrack({
     { kind: 'pillar', at: 0.78, lateral: 0 },
   ],
   landmarks: [
-    { kind: 'ruin', x: -18, z: 30, hw: 6, hd: 1.2 },
-    { kind: 'pillar', x: -24, z: 22, r: 1.6 },
-    { kind: 'pillar', x: -12, z: 22, r: 1.6 },
-    { kind: 'pillar', x: -18, z: -28, r: 1.8 },
+    // the old orchard keeper's patch in the middle
+    { kind: 'mangotree', x: -18, z: 26, r: 2.4 },
+    { kind: 'bush', x: -24, z: 18, r: 1.4 },
+    { kind: 'bush', x: -11, z: 19, r: 1.2 },
+    { kind: 'mangotree', x: -18, z: -28, r: 2.2 },
   ],
   scenery: [
-    { kind: 'palm', count: 70, seed: 21, gap: 5 },
-    { kind: 'rock', count: 12, seed: 5, gap: 5, r: 1.4 },
+    { kind: 'mangotree', count: 44, seed: 21, gap: 8 },
+    { kind: 'bush', count: 40, seed: 8, gap: 4, r: 1.3 },
+    { kind: 'palm', count: 8, seed: 4, gap: 6 },
+    { kind: 'rock', count: 6, seed: 5, gap: 5, r: 1.2 },
   ],
-  keepClear: [{ x: -18, z: 26, r: 9 }],
+  keepClear: [{ x: -18, z: 24, r: 10 }],
 });

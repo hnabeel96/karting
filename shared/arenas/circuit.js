@@ -7,6 +7,7 @@ import { defineTrack } from '../defineTrack.js';
 export default defineTrack({
   id: 'circuit',
   name: 'Temple Circuit',
+  theme: 'temple',
   laps: 3,
   width: 16,
   half: 96,

@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-const RANDOM_YAW_DEFAULT = new Set(['palm', 'pillar', 'rock']);
+const RANDOM_YAW_DEFAULT = new Set(['palm', 'pillar', 'rock', 'mangotree', 'bush']);
 
 /**
  * @returns {Promise<{kart: {scene, opts}|null, props: Record<string, {scene, opts}>}>}

@@ -12,8 +12,8 @@
 
 import { buildTrack, gridSpawns, alongTrack, acrossTrack } from './track.js';
 
-const SCENERY_KINDS = ['palm', 'rock', 'pillar'];
-const LANDMARK_KINDS = ['temple', 'ruin', 'pillar', 'palm', 'rock'];
+const SCENERY_KINDS = ['palm', 'rock', 'pillar', 'mangotree', 'bush'];
+const LANDMARK_KINDS = ['temple', 'ruin', ...SCENERY_KINDS];
 const HAZARD_KINDS = { pillar: 1.3, rock: 1.5 };
 
 /** deterministic random numbers (no Math.random in shared code: phones and server must agree) */
@@ -48,7 +48,9 @@ export function defineTrack(cfg) {
     landmarks = [],
     scenery = [],
     keepClear = [],
+    theme = 'temple',
   } = cfg;
+  if (typeof theme !== 'string' && (typeof theme !== 'object' || !theme)) throw new Error(`${where}: theme is a preset name like 'grove', or { preset: 'grove', ...colours }`);
 
   const track = buildTrack({ control, width, spacing: 4, gateCount: gates });
 
@@ -87,6 +89,7 @@ export function defineTrack(cfg) {
   return {
     id,
     name,
+    theme, // how it looks: see client/src/themes.js
     half,
     laps,
     track,

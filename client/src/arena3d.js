@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { StaticBatch, canvasTexture, seeded, toon, Spring } from './util.js';
 import { ModelInstances, modelBox, placement } from './models.js';
+import { themeFor } from './themes.js';
 
 export const PALETTE = {
   sky: '#7cc8f2',
@@ -28,18 +29,27 @@ export const PALETTE = {
   mangoRed: '#ff5d2a',
 };
 
+// the palette of the arena being built (set by useTheme before building)
+let P = PALETTE;
+
+/** switch to a track's theme; returns it. Call before buildSky / buildLights / buildArena. */
+export function useTheme(arena) {
+  P = { ...PALETTE, ...themeFor(arena) };
+  return P;
+}
+
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 
 export function buildSky(scene) {
-  scene.background = new THREE.Color(PALETTE.sky);
-  scene.fog = new THREE.Fog(PALETTE.haze, 80, 260);
+  scene.background = new THREE.Color(P.sky);
+  scene.fog = new THREE.Fog(P.haze, P.fogNear, P.fogFar);
 
   const tex = canvasTexture(4, 256, (g, w, h) => {
     const grd = g.createLinearGradient(0, 0, 0, h);
-    grd.addColorStop(0, PALETTE.skyTop);
-    grd.addColorStop(0.42, PALETTE.sky);
-    grd.addColorStop(0.5, PALETTE.haze);
-    grd.addColorStop(1, PALETTE.haze);
+    grd.addColorStop(0, P.skyTop);
+    grd.addColorStop(0.42, P.sky);
+    grd.addColorStop(0.5, P.haze);
+    grd.addColorStop(1, P.haze);
     g.fillStyle = grd;
     g.fillRect(0, 0, w, h);
   });
@@ -62,7 +72,7 @@ export function buildSky(scene) {
     const cy = 70 + rnd() * 40;
     for (let j = 0; j < 4; j++) {
       const s = 10 + rnd() * 9;
-      clouds.add(puff, '#ffffff', [cx + (j - 1.5) * 12 + rnd() * 4, cy + rnd() * 5, cz + rnd() * 6], [rnd(), rnd(), 0], [s * 1.3, s * 0.7, s]);
+      clouds.add(puff, P.clouds, [cx + (j - 1.5) * 12 + rnd() * 4, cy + rnd() * 5, cz + rnd() * 6], [rnd(), rnd(), 0], [s * 1.3, s * 0.7, s]);
     }
   }
   const cm = clouds.build(new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
@@ -70,9 +80,9 @@ export function buildSky(scene) {
 }
 
 export function buildLights(scene) {
-  const hemi = new THREE.HemisphereLight('#dff4ff', '#7a9a45', 1.55);
+  const hemi = new THREE.HemisphereLight(P.skyLight, P.groundLight, P.ambient);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight('#fff0d4', 2.4);
+  const sun = new THREE.DirectionalLight(P.sunColor, P.sunStrength);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   const sc = sun.shadow.camera;
@@ -105,7 +115,7 @@ function floorTexture(repeat = 7) {
     512,
     512,
     (g, w, h) => {
-      g.fillStyle = PALETTE.grout;
+      g.fillStyle = P.grout;
       g.fillRect(0, 0, w, h);
       const n = 8;
       const t = w / n;
@@ -113,7 +123,7 @@ function floorTexture(repeat = 7) {
         for (let x = 0; x < n; x++) {
           const off = y % 2 ? t / 2 : 0;
           const shade = 0.88 + rnd() * 0.14;
-          const base = new THREE.Color(PALETTE.sand).multiplyScalar(shade);
+          const base = new THREE.Color(P.sand).multiplyScalar(shade);
           g.fillStyle = '#' + base.getHexString();
           g.fillRect(x * t + off + 3, y * t + 3, t - 6, t - 6);
           if (off) g.fillRect(-t / 2 + 3, y * t + 3, t - 6, t - 6);
@@ -154,7 +164,7 @@ function grassTexture() {
     256,
     256,
     (g, w, h) => {
-      g.fillStyle = PALETTE.grass;
+      g.fillStyle = P.grass;
       g.fillRect(0, 0, w, h);
       for (let i = 0; i < 900; i++) {
         g.fillStyle = rnd() < 0.5 ? 'rgba(59,125,44,0.6)' : 'rgba(120,180,70,0.45)';
@@ -165,17 +175,44 @@ function grassTexture() {
   );
 }
 
+// a mown lawn with a few flowers: the ground inside the walls on garden tracks
+function lawnTexture(repeat) {
+  const rnd = seeded(13);
+  return canvasTexture(
+    256,
+    256,
+    (g, w, h) => {
+      g.fillStyle = P.grass;
+      g.fillRect(0, 0, w, h);
+      // mowing stripes
+      g.fillStyle = 'rgba(255,255,200,0.07)';
+      g.fillRect(0, 0, w / 2, h);
+      for (let i = 0; i < 700; i++) {
+        g.fillStyle = rnd() < 0.5 ? 'rgba(30,90,30,0.35)' : 'rgba(150,200,90,0.35)';
+        g.fillRect(rnd() * w, rnd() * h, 2 + rnd() * 2, 4 + rnd() * 5);
+      }
+      for (let i = 0; i < 26; i++) {
+        g.fillStyle = P.flowers[i % P.flowers.length];
+        g.beginPath();
+        g.arc(rnd() * w, rnd() * h, 2 + rnd() * 1.5, 0, Math.PI * 2);
+        g.fill();
+      }
+    },
+    { repeat },
+  );
+}
+
 function dirtTexture() {
   const rnd = seeded(5);
   return canvasTexture(
     256,
     256,
     (g, w, h) => {
-      g.fillStyle = '#b98a52';
+      g.fillStyle = P.road;
       g.fillRect(0, 0, w, h);
       for (let i = 0; i < 1400; i++) {
         const v = rnd();
-        g.fillStyle = v < 0.5 ? 'rgba(140,98,55,0.5)' : 'rgba(214,174,120,0.5)';
+        g.fillStyle = v < 0.5 ? P.roadDark : P.roadLight;
         g.beginPath();
         g.arc(rnd() * w, rnd() * h, 1 + rnd() * 3, 0, Math.PI * 2);
         g.fill();
@@ -188,7 +225,7 @@ function dirtTexture() {
 function crateTexture() {
   return canvasTexture(256, 256, (g, w) => {
     // planks
-    g.fillStyle = PALETTE.wood;
+    g.fillStyle = P.wood;
     g.fillRect(0, 0, w, w);
     for (let i = 0; i < 4; i++) {
       g.fillStyle = i % 2 ? '#c98543' : '#b56f2f';
@@ -203,7 +240,7 @@ function crateTexture() {
       }
     }
     // frame
-    g.strokeStyle = PALETTE.woodDark;
+    g.strokeStyle = P.woodDark;
     g.lineWidth = 26;
     g.strokeRect(13, 13, w - 26, w - 26);
     // nails
@@ -217,7 +254,7 @@ function crateTexture() {
     g.save();
     g.translate(w / 2, w / 2);
     g.fillStyle = '#ffd36b';
-    g.strokeStyle = PALETTE.woodDark;
+    g.strokeStyle = P.woodDark;
     g.lineWidth = 6;
     for (let i = 0; i < 8; i++) {
       g.rotate(Math.PI / 4);
@@ -233,7 +270,7 @@ function crateTexture() {
     g.arc(0, 0, 36, 0, Math.PI * 2);
     g.fill();
     g.stroke();
-    g.fillStyle = PALETTE.woodDark;
+    g.fillStyle = P.woodDark;
     g.beginPath();
     g.arc(-11, -6, 5, 0, Math.PI * 2);
     g.arc(11, -6, 5, 0, Math.PI * 2);
@@ -269,7 +306,7 @@ function addPalm(b, x, z, rnd) {
       rot,
       new THREE.Vector3(1 - i * 0.07, 1, 1 - i * 0.07),
     );
-    b.addMatrix(seg, i % 2 ? PALETTE.trunk : '#9c6a3c', m);
+    b.addMatrix(seg, i % 2 ? P.trunk : '#9c6a3c', m);
     px += ux * L * 0.96;
     py += uy * L * 0.96;
     pz += uz * L * 0.96;
@@ -279,7 +316,7 @@ function addPalm(b, x, z, rnd) {
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * Math.PI * 2 + rnd() * 0.3;
     const e = new THREE.Euler(0.45 + rnd() * 0.25, a, 0, 'YXZ');
-    b.add(leaf, i % 2 ? PALETTE.leaf : PALETTE.leafDark, [px, py + 0.1, pz], e);
+    b.add(leaf, i % 2 ? P.leaf : P.leafDark, [px, py + 0.1, pz], e);
   }
   const nut = new THREE.IcosahedronGeometry(0.28, 0);
   for (let i = 0; i < 3; i++) {
@@ -291,14 +328,14 @@ function addPalm(b, x, z, rnd) {
 function addPillar(b, o, rnd) {
   const broken = rnd() < 0.35;
   const h = broken ? 2.6 + rnd() : 5;
-  b.add(box(o.r * 2.4, 0.6, o.r * 2.4), PALETTE.stoneDark, [o.x, 0.3, o.z]);
-  b.add(new THREE.CylinderGeometry(o.r * 0.95, o.r, h, 8), PALETTE.stone, [o.x, 0.6 + h / 2, o.z], [0, rnd(), 0]);
+  b.add(box(o.r * 2.4, 0.6, o.r * 2.4), P.stoneDark, [o.x, 0.3, o.z]);
+  b.add(new THREE.CylinderGeometry(o.r * 0.95, o.r, h, 8), P.stone, [o.x, 0.6 + h / 2, o.z], [0, rnd(), 0]);
   if (!broken) {
-    b.add(box(o.r * 2.5, 0.7, o.r * 2.5), PALETTE.stoneLight, [o.x, 0.6 + h + 0.35, o.z]);
-    b.add(box(o.r * 2.1, 0.2, o.r * 2.1), PALETTE.moss, [o.x, 0.6 + h + 0.8, o.z]);
+    b.add(box(o.r * 2.5, 0.7, o.r * 2.5), P.stoneLight, [o.x, 0.6 + h + 0.35, o.z]);
+    b.add(box(o.r * 2.1, 0.2, o.r * 2.1), P.moss, [o.x, 0.6 + h + 0.8, o.z]);
   } else {
     // fallen chunk lying beside it
-    b.add(new THREE.CylinderGeometry(o.r * 0.9, o.r * 0.9, 1.6, 8), PALETTE.stoneDark, [o.x + 2.6, 0.9, o.z - 1.2], [0, 0.8, Math.PI / 2]);
+    b.add(new THREE.CylinderGeometry(o.r * 0.9, o.r * 0.9, 1.6, 8), P.stoneDark, [o.x + 2.6, 0.9, o.z - 1.2], [0, 0.8, Math.PI / 2]);
   }
 }
 
@@ -314,8 +351,8 @@ function addRuin(b, o, rnd) {
     const z = along === 'x' ? o.z : o.z + t;
     const w = along === 'x' ? 1.96 : thick;
     const d = along === 'x' ? thick : 1.96;
-    b.add(box(w, h, d), rnd() < 0.5 ? PALETTE.stone : PALETTE.stoneLight, [x, h / 2, z]);
-    if (rnd() < 0.5) b.add(box(w * 0.9, 0.16, d * 0.9), PALETTE.moss, [x, h + 0.08, z]);
+    b.add(box(w, h, d), rnd() < 0.5 ? P.stone : P.stoneLight, [x, h / 2, z]);
+    if (rnd() < 0.5) b.add(box(w * 0.9, 0.16, d * 0.9), P.moss, [x, h + 0.08, z]);
   }
 }
 
@@ -331,20 +368,20 @@ function addTemple(batch, o) {
   const tiers = [12, 10, 8, 6];
   let y = 0;
   tiers.forEach((s, i) => {
-    b.add(box(s, 1.3, s), i % 2 ? PALETTE.stoneLight : PALETTE.stone, [o.x, y + 0.65, o.z]);
-    b.add(box(s + 0.1, 0.18, s + 0.1), PALETTE.moss, [o.x, y + 1.3, o.z]);
+    b.add(box(s, 1.3, s), i % 2 ? P.stoneLight : P.stone, [o.x, y + 0.65, o.z]);
+    b.add(box(s + 0.1, 0.18, s + 0.1), P.moss, [o.x, y + 1.3, o.z]);
     y += 1.3;
   });
   // shrine
-  b.add(box(3.8, 2.6, 3.8), PALETTE.stoneDark, [o.x, y + 1.3, o.z]);
-  b.add(box(4.6, 0.5, 4.6), PALETTE.stone, [o.x, y + 2.85, o.z]);
+  b.add(box(3.8, 2.6, 3.8), P.stoneDark, [o.x, y + 1.3, o.z]);
+  b.add(box(4.6, 0.5, 4.6), P.stone, [o.x, y + 2.85, o.z]);
   b.add(box(1.4, 1.8, 0.1), '#2a2018', [o.x, y + 0.9, o.z - 1.92]);
   b.add(box(1.4, 1.8, 0.1), '#2a2018', [o.x, y + 0.9, o.z + 1.92]);
   // stairs on two sides
   for (let i = 0; i < 4; i++) {
     const s = 1.3 * (i + 1);
-    b.add(box(3, s, 1.4), PALETTE.stoneLight, [o.x, s / 2, o.z - 6.7 + i * 1.0]);
-    b.add(box(3, s, 1.4), PALETTE.stoneLight, [o.x, s / 2, o.z + 6.7 - i * 1.0]);
+    b.add(box(3, s, 1.4), P.stoneLight, [o.x, s / 2, o.z - 6.7 + i * 1.0]);
+    b.add(box(3, s, 1.4), P.stoneLight, [o.x, s / 2, o.z + 6.7 - i * 1.0]);
   }
   // hanging vines
   const vine = box(0.18, 1, 0.18);
@@ -355,18 +392,49 @@ function addTemple(batch, o) {
     const x = side < 2 ? t * 10 : side === 2 ? s : -s;
     const z = side < 2 ? (side === 0 ? s : -s) : t * 10;
     const len = 0.6 + ((i * 53) % 7) * 0.18;
-    b.add(vine, PALETTE.leafDark, [o.x + x, 1.3 - len / 2 + 0.1, o.z + z], [0, 0, 0], [1, len, 1]);
+    b.add(vine, P.leafDark, [o.x + x, 1.3 - len / 2 + 0.1, o.z + z], [0, 0, 0], [1, len, 1]);
   }
   return (y + 3.1) * k; // top of the shrine, where the idol sits
 }
 
+function addMangoTree(b, o, rnd) {
+  const s = (o.r || 1.6) * (0.9 + rnd() * 0.35);
+  const crown = new THREE.IcosahedronGeometry(1, 0);
+  const trunkH = 2.2 * s;
+  b.add(new THREE.CylinderGeometry(0.28 * s, 0.4 * s, trunkH, 6), P.trunk, [o.x, trunkH / 2, o.z], [0, 0, (rnd() - 0.5) * 0.15]);
+  const top = trunkH + 1.2 * s;
+  b.add(crown, P.leafDark, [o.x, top, o.z], [rnd(), rnd(), rnd()], [2.3 * s, 1.7 * s, 2.3 * s]);
+  b.add(crown, P.leaf, [o.x + 0.8 * s, top + 0.6 * s, o.z - 0.4 * s], [rnd(), rnd(), rnd()], 1.5 * s);
+  b.add(crown, P.leaf, [o.x - 0.9 * s, top + 0.3 * s, o.z + 0.6 * s], [rnd(), rnd(), rnd()], 1.3 * s);
+  // ripe mangoes hanging under the canopy
+  const fruit = new THREE.IcosahedronGeometry(0.22 * s, 0);
+  for (let i = 0; i < 7; i++) {
+    const a = rnd() * Math.PI * 2;
+    const r = (1.2 + rnd() * 0.8) * s;
+    b.add(fruit, i % 3 ? P.mango : P.mangoRed, [o.x + Math.sin(a) * r, top - 1.1 * s + rnd() * 0.6 * s, o.z + Math.cos(a) * r], [0, 0, 0], [1, 1.25, 1]);
+  }
+}
+
+function addBush(b, o, rnd) {
+  const s = o.r || 1.2;
+  const crown = new THREE.IcosahedronGeometry(1, 0);
+  b.add(crown, P.hedge, [o.x, s * 0.6, o.z], [rnd(), rnd(), 0], [s * 1.3, s, s * 1.2]);
+  b.add(crown, P.hedgeDark, [o.x + s * 0.7, s * 0.45, o.z - s * 0.3], [rnd(), rnd(), 0], s * 0.75);
+  const dot = new THREE.IcosahedronGeometry(0.16, 0);
+  for (let i = 0; i < 5; i++) {
+    const a = rnd() * Math.PI * 2;
+    b.add(dot, P.flowers[i % P.flowers.length], [o.x + Math.sin(a) * s * 1.1, s * (0.5 + rnd() * 0.6), o.z + Math.cos(a) * s * 1.05]);
+  }
+}
+
 function addRock(b, o, rnd) {
   const g = new THREE.IcosahedronGeometry(1, 0);
-  b.add(g, PALETTE.stoneDark, [o.x, o.r * 0.55, o.z], [rnd(), rnd(), rnd()], [o.r * 1.15, o.r * 0.9, o.r * 1.05]);
-  b.add(g, PALETTE.stone, [o.x + o.r * 0.5, o.r * 0.3, o.z - o.r * 0.4], [rnd(), rnd(), rnd()], [o.r * 0.6, o.r * 0.5, o.r * 0.6]);
+  b.add(g, P.stoneDark, [o.x, o.r * 0.55, o.z], [rnd(), rnd(), rnd()], [o.r * 1.15, o.r * 0.9, o.r * 1.05]);
+  b.add(g, P.stone, [o.x + o.r * 0.5, o.r * 0.3, o.z - o.r * 0.4], [rnd(), rnd(), rnd()], [o.r * 0.6, o.r * 0.5, o.r * 0.6]);
 }
 
 function addWalls(b, half, rnd) {
+  if (P.walls === 'hedge') return addHedgeWalls(b, half, rnd);
   const block = box(2, 1, 2);
   for (let side = 0; side < 4; side++) {
     for (let i = -half; i <= half; i += 2) {
@@ -374,25 +442,52 @@ function addWalls(b, half, rnd) {
       const x = side < 2 ? i : side === 2 ? half + 1 : -half - 1;
       const z = side < 2 ? (side === 0 ? half + 1 : -half - 1) : i;
       const shade = rnd();
-      b.add(block, shade < 0.33 ? PALETTE.stone : shade < 0.66 ? PALETTE.stoneLight : PALETTE.stoneDark, [x, h / 2, z], [0, 0, 0], [0.98, h, 0.98]);
-      if (rnd() < 0.3) b.add(block, PALETTE.moss, [x, h + 0.08, z], [0, 0, 0], [0.9, 0.16, 0.9]);
+      b.add(block, shade < 0.33 ? P.stone : shade < 0.66 ? P.stoneLight : P.stoneDark, [x, h / 2, z], [0, 0, 0], [0.98, h, 0.98]);
+      if (rnd() < 0.3) b.add(block, P.moss, [x, h + 0.08, z], [0, 0, 0], [0.9, 0.16, 0.9]);
     }
   }
   // corner towers with a gold cap
   for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const cx = x * (half + 1);
     const cz = z * (half + 1);
-    b.add(box(4.4, 5, 4.4), PALETTE.stoneDark, [cx, 2.5, cz]);
-    b.add(box(5, 0.6, 5), PALETTE.stone, [cx, 5.3, cz]);
-    b.add(new THREE.ConeGeometry(1.6, 2.4, 4), PALETTE.gold, [cx, 6.8, cz], [0, Math.PI / 4, 0]);
+    b.add(box(4.4, 5, 4.4), P.stoneDark, [cx, 2.5, cz]);
+    b.add(box(5, 0.6, 5), P.stone, [cx, 5.3, cz]);
+    b.add(new THREE.ConeGeometry(1.6, 2.4, 4), P.gold, [cx, 6.8, cz], [0, Math.PI / 4, 0]);
   }
   // torches every so often along the walls (small orange cubes on posts)
   for (let side = 0; side < 4; side++) {
     for (let i = -30; i <= 30; i += 20) {
       const x = side < 2 ? i : side === 2 ? half - 0.3 : -half + 0.3;
       const z = side < 2 ? (side === 0 ? half - 0.3 : -half + 0.3) : i;
-      b.add(box(0.3, 2.8, 0.3), PALETTE.trunk, [x, 1.4, z]);
-      b.add(box(0.7, 0.4, 0.7), PALETTE.stoneDark, [x, 2.9, z]);
+      b.add(box(0.3, 2.8, 0.3), P.trunk, [x, 1.4, z]);
+      b.add(box(0.7, 0.4, 0.7), P.stoneDark, [x, 2.9, z]);
+    }
+  }
+}
+
+function addHedgeWalls(b, half, rnd) {
+  const block = box(2, 1, 2);
+  const blob = new THREE.IcosahedronGeometry(1, 0);
+  const dot = new THREE.IcosahedronGeometry(0.18, 0);
+  for (let side = 0; side < 4; side++) {
+    for (let i = -half; i <= half; i += 2) {
+      const h = 2.1 + rnd() * 0.4;
+      const x = side < 2 ? i : side === 2 ? half + 1 : -half - 1;
+      const z = side < 2 ? (side === 0 ? half + 1 : -half - 1) : i;
+      b.add(block, rnd() < 0.5 ? P.hedge : P.hedgeDark, [x, h / 2, z], [0, 0, 0], [1.05, h, 1.05]);
+      b.add(blob, rnd() < 0.5 ? P.hedge : P.leaf, [x, h, z], [rnd(), rnd(), 0], [1.15, 0.5, 1.15]);
+      if (rnd() < 0.35) b.add(dot, P.flowers[Math.floor(rnd() * P.flowers.length)], [x + (rnd() - 0.5) * 1.6, 0.6 + rnd() * h * 0.8, z + (rnd() - 0.5) * 1.6]);
+    }
+  }
+  // a big shady tree in each corner
+  for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) addMangoTree(b, { x: x * (half + 1), z: z * (half + 1), r: 2.6 }, rnd);
+  // lantern posts (the lanterns glow: see the flames in buildArena)
+  for (let side = 0; side < 4; side++) {
+    for (let i = -30; i <= 30; i += 20) {
+      const x = side < 2 ? i : side === 2 ? half - 0.3 : -half + 0.3;
+      const z = side < 2 ? (side === 0 ? half - 0.3 : -half + 0.3) : i;
+      b.add(box(0.3, 2.8, 0.3), P.trunk, [x, 1.4, z]);
+      b.add(box(0.7, 0.4, 0.7), P.woodDark, [x, 2.9, z]);
     }
   }
 }
@@ -400,7 +495,7 @@ function addWalls(b, half, rnd) {
 function addJungle(b, half, rnd) {
   const crown = new THREE.IcosahedronGeometry(1, 0);
   const trunk = new THREE.CylinderGeometry(0.35, 0.5, 1, 5);
-  const greens = [PALETTE.leaf, PALETTE.leafDark, '#4aa83c', '#2f8a3a', '#5aa63a'];
+  const greens = P.forest;
   for (let i = 0; i < 150; i++) {
     const a = rnd() * Math.PI * 2;
     const r = half + 8 + Math.pow(rnd(), 0.8) * 70;
@@ -408,7 +503,7 @@ function addJungle(b, half, rnd) {
     const z = Math.cos(a) * r;
     const s = 3 + rnd() * 4.5;
     const th = s * 1.1;
-    b.add(trunk, PALETTE.trunk, [x, th / 2, z], [0, 0, 0], [s * 0.25, th, s * 0.25]);
+    b.add(trunk, P.trunk, [x, th / 2, z], [0, 0, 0], [s * 0.25, th, s * 0.25]);
     b.add(crown, greens[i % greens.length], [x, th + s * 0.7, z], [rnd(), rnd(), rnd()], [s, s * 0.9, s]);
     if (rnd() < 0.5) b.add(crown, greens[(i + 2) % greens.length], [x + s * 0.5, th + s * 1.3, z], [rnd(), rnd(), rnd()], s * 0.65);
   }
@@ -426,7 +521,7 @@ function addJungle(b, half, rnd) {
     const a = (i / 14) * Math.PI * 2 + rnd() * 0.2;
     const r = Math.max(175, half + 110) + rnd() * 30;
     const h = 40 + rnd() * 45 + Math.max(0, half - 46) * 0.5;
-    b.add(peak, rnd() < 0.5 ? '#5b8a6a' : '#6f9a72', [Math.sin(a) * r, h / 2 - 2, Math.cos(a) * r], [0, rnd(), 0], [35 + rnd() * 20, h, 35 + rnd() * 20]);
+    b.add(peak, P.mountains[rnd() < 0.5 ? 0 : 1], [Math.sin(a) * r, h / 2 - 2, Math.cos(a) * r], [0, rnd(), 0], [35 + rnd() * 20, h, 35 + rnd() * 20]);
   }
 }
 
@@ -465,6 +560,8 @@ function trackSurface(track) {
 function addTrackWalls(b, track, rnd) {
   const segs = track.walls;
   const piece = box(1, 1, 1);
+  const blob = new THREE.IcosahedronGeometry(1, 0);
+  const dot = new THREE.IcosahedronGeometry(0.17, 0);
   segs.forEach((w, i) => {
     const dx = w.x2 - w.x1;
     const dz = w.z2 - w.z1;
@@ -474,12 +571,23 @@ function addTrackWalls(b, track, rnd) {
     const cx = (w.x1 + w.x2) / 2;
     const cz = (w.z1 + w.z2) / 2;
     const tone = (i * 13) % 3;
-    b.add(piece, tone === 0 ? PALETTE.stone : tone === 1 ? PALETTE.stoneLight : PALETTE.stoneDark, [cx, h / 2, cz], [0, yaw, 0], [w.r * 2, h, len]);
-    if ((i * 5) % 7 < 2) b.add(piece, PALETTE.moss, [cx, h + 0.06, cz], [0, yaw, 0], [w.r * 2 * 0.9, 0.12, len * 0.9]);
+    if (P.walls === 'hedge') {
+      const hh = 1.25 + ((i * 7) % 5) * 0.05;
+      b.add(piece, tone === 0 ? P.hedgeDark : P.hedge, [cx, hh / 2, cz], [0, yaw, 0], [w.r * 2 + 0.3, hh, len]);
+      b.add(blob, tone === 1 ? P.leaf : P.hedge, [cx, hh, cz], [0, yaw, 0], [w.r + 0.25, 0.32, len * 0.6]);
+      if ((i * 5) % 7 < 2) b.add(dot, P.flowers[i % P.flowers.length], [cx, hh * 0.55 + ((i * 3) % 4) * 0.12, cz], [0, 0, 0], [1, 1, 1]);
+      if (i % 9 === 0) {
+        b.add(piece, P.trunk, [w.x1, 0.85, w.z1], [0, yaw, 0], [0.5, 1.7, 0.5]);
+        b.add(piece, P.woodDark, [w.x1, 1.75, w.z1], [0, yaw, 0], [0.7, 0.18, 0.7]);
+      }
+      return;
+    }
+    b.add(piece, tone === 0 ? P.stone : tone === 1 ? P.stoneLight : P.stoneDark, [cx, h / 2, cz], [0, yaw, 0], [w.r * 2, h, len]);
+    if ((i * 5) % 7 < 2) b.add(piece, P.moss, [cx, h + 0.06, cz], [0, yaw, 0], [w.r * 2 * 0.9, 0.12, len * 0.9]);
     // a taller post every few pieces
     if (i % 9 === 0) {
-      b.add(piece, PALETTE.stoneDark, [w.x1, 0.9, w.z1], [0, yaw, 0], [1.4, 1.8, 1.4]);
-      b.add(piece, PALETTE.stoneLight, [w.x1, 1.9, w.z1], [0, yaw, 0], [1.6, 0.25, 1.6]);
+      b.add(piece, P.stoneDark, [w.x1, 0.9, w.z1], [0, yaw, 0], [1.4, 1.8, 1.4]);
+      b.add(piece, P.stoneLight, [w.x1, 1.9, w.z1], [0, yaw, 0], [1.6, 0.25, 1.6]);
     }
   });
 }
@@ -503,8 +611,29 @@ function addKerbs(b, track) {
       const o = sideSign === inside ? off : off;
       const x = c.x + c.nx * o * sideSign + (next.x - c.x) / 2;
       const zz = c.z + c.nz * o * sideSign + (next.z - c.z) / 2;
-      b.add(piece, i % 2 ? '#e8463c' : '#fff1d6', [x, 0.04, zz], [0, c.yaw, 0], [1.1, 0.08, len]);
+      b.add(piece, i % 2 ? P.kerbA : P.kerbB, [x, 0.04, zz], [0, c.yaw, 0], [1.1, 0.08, len]);
     }
+  }
+}
+
+// wooden gateway with a garland of leaves and marigolds, like a festival toran
+function woodArch(b, c, span) {
+  for (const sgn of [1, -1]) {
+    const x = c.x + c.nx * span * sgn;
+    const z = c.z + c.nz * span * sgn;
+    b.add(box(1, 1, 1), P.trunk, [x, 3.6, z], [0, c.yaw, 0], [0.8, 7.2, 0.8]);
+    b.add(new THREE.IcosahedronGeometry(1, 0), P.mango, [x, 7.5, z], [0, 0, 0], 0.55);
+  }
+  b.add(box(1, 1, 1), P.woodDark, [c.x, 6.5, c.z], [0, c.yaw, 0], [span * 2 + 1, 0.5, 0.5]);
+  const leaf = new THREE.ConeGeometry(0.28, 0.9, 4);
+  const ball = new THREE.IcosahedronGeometry(0.26, 0);
+  const count = Math.round(span * 3);
+  for (let k = 0; k <= count; k++) {
+    const t = (k / count) * 2 - 1;
+    const x = c.x + c.nx * span * t;
+    const z = c.z + c.nz * span * t;
+    b.add(leaf, k % 2 ? P.leaf : P.leafDark, [x, 6.0, z], [Math.PI, 0, 0]);
+    if (k % 2 === 0) b.add(ball, k % 4 ? P.mango : P.mangoRed, [x, 5.55, z]);
   }
 }
 
@@ -530,16 +659,17 @@ function startLine(scene, b, track, name) {
 
   // arch: two stone towers and a banner
   const span = track.width / 2 + 2.2;
-  for (const sgn of [1, -1]) {
+  if (P.arch === 'wood') woodArch(b, c, span);
+  else for (const sgn of [1, -1]) {
     const x = c.x + c.nx * span * sgn;
     const z = c.z + c.nz * span * sgn;
-    b.add(box(1, 1, 1), PALETTE.stoneDark, [x, 3.5, z], [0, c.yaw, 0], [2.2, 7, 2.2]);
-    b.add(box(1, 1, 1), PALETTE.stoneLight, [x, 7.2, z], [0, c.yaw, 0], [2.8, 0.5, 2.8]);
-    b.add(new THREE.ConeGeometry(1.4, 2, 4), PALETTE.gold, [x, 8.4, z], [0, c.yaw + Math.PI / 4, 0]);
+    b.add(box(1, 1, 1), P.stoneDark, [x, 3.5, z], [0, c.yaw, 0], [2.2, 7, 2.2]);
+    b.add(box(1, 1, 1), P.stoneLight, [x, 7.2, z], [0, c.yaw, 0], [2.8, 0.5, 2.8]);
+    b.add(new THREE.ConeGeometry(1.4, 2, 4), P.gold, [x, 8.4, z], [0, c.yaw + Math.PI / 4, 0]);
   }
-  b.add(box(1, 1, 1), PALETTE.stone, [c.x, 6.4, c.z], [0, c.yaw, 0], [span * 2, 0.6, 1.2]);
+  if (P.arch !== 'wood') b.add(box(1, 1, 1), P.stone, [c.x, 6.4, c.z], [0, c.yaw, 0], [span * 2, 0.6, 1.2]);
   const banner = canvasTexture(512, 96, (ctx, w, h) => {
-    ctx.fillStyle = '#d9620b';
+    ctx.fillStyle = P.banner;
     ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = '#3b2412';
     ctx.lineWidth = 8;
@@ -592,7 +722,7 @@ function builtInMango() {
   const pos = body.attributes.position;
   const cols = new Float32Array(pos.count * 3);
   const top = new THREE.Color('#ffd23a');
-  const bot = new THREE.Color(PALETTE.mangoRed);
+  const bot = new THREE.Color(P.mangoRed);
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     c.copy(bot).lerp(top, pos.getY(i) + 0.5);
@@ -698,7 +828,8 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
   scene.add(grass);
 
   // tiled courtyard floor
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(half * 2 + 4, half * 2 + 4), new THREE.MeshLambertMaterial({ map: floorTexture(Math.round((half * 2 + 4) / 13.7)) }));
+  const floorMap = P.ground === 'grass' ? lawnTexture(Math.round((half * 2 + 4) / 9)) : floorTexture(Math.round((half * 2 + 4) / 13.7));
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(half * 2 + 4, half * 2 + 4), new THREE.MeshLambertMaterial({ map: floorMap }));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
@@ -720,7 +851,7 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
   const far = new StaticBatch();
   addWalls(near, half, rnd);
   let idolY = 6;
-  let idolAt = { x: 0, z: 0 };
+  let idolAt = null; // the golden idol floats over a temple, if there is one
   const swapped = {}; // kind -> obstacles drawn with a model file instead
   if (arena.track) {
     scene.add(trackSurface(arena.track));
@@ -743,6 +874,8 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
     else if (o.kind === 'pillar') addPillar(near, o, rnd);
     else if (o.kind === 'palm') addPalm(near, o.x, o.z, rnd);
     else if (o.kind === 'rock') addRock(near, o, rnd);
+    else if (o.kind === 'mangotree') addMangoTree(near, o, rnd);
+    else if (o.kind === 'bush') addBush(near, o, rnd);
   }
   addJungle(far, half, rnd);
 
@@ -772,14 +905,16 @@ export function buildArena(scene, arena, world, models = { props: {} }) {
 
   // golden idol spinning on the temple
   const idol = new THREE.Group();
-  const gold = new THREE.MeshLambertMaterial({ color: PALETTE.gold, emissive: '#b8740a', emissiveIntensity: 0.5, flatShading: true });
+  const gold = new THREE.MeshLambertMaterial({ color: P.gold, emissive: '#b8740a', emissiveIntensity: 0.5, flatShading: true });
   const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.8, 0), gold);
   head.position.y = 1.4;
   const base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 1, 6), gold);
   base.position.y = 0.5;
   idol.add(head, base);
+  idolAt ||= { x: 0, z: 0 };
   idol.position.set(idolAt.x, idolY, idolAt.z);
   idol.scale.setScalar(idolAt.scale || 1);
+  idol.visible = props.some((o) => o.kind === 'temple');
   scene.add(idol);
 
   // torch flames: little glowing cubes on top of the posts
